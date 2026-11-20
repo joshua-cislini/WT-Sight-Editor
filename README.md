@@ -28,6 +28,9 @@ Built in compliance with the official [War Thunder CDK Custom Sight Specificatio
 
 ## 1. Quick Start & Launching
 
+The working web app can be found [here](https://joshua-cislini.github.io/WT-Sight-Editor/) hosted on my GitHub page.
+
+Naturally you can also run it locally on your own hardware;
 No Node.js, Python, compiler, or server installation is required.
 
 ### Option A: Windows Launcher with Automatic `sights/` Folder Sync (Recommended)
@@ -354,6 +357,12 @@ Maps directly to War Thunder's top-level `.blk` header properties and blocks:
   - Open **Reticle Layers & Static Base → Sight Optimizer & Complexity**, adjust **`Detail Kept`** downward (`50%–75%`), and click **`Optimize Sight`** (or click **`↩ Undo Optimize`** if you want to restore full detail and pick a higher percentage).
 - **Custom sight doesn't match the proportions I saw in the editor**:
   - Remember the outer viewport rectangle in the editor represents the exact **16:9** in-game screen (`Y: -0.5 to +0.5`, `X: -0.8889 to +0.8889`). Elements with `thousandth:b=true` scale with gunner optic magnification (zoom FOV), while elements with `thousandth:b=false` remain fixed in screen coordinates.
+
+---
+
+## Disclaimer
+
+Portions of this project, including parts of the code, styling, and documentation, were created with the assistance of AI.
 
 ---
 
