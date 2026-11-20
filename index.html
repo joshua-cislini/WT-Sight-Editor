@@ -3,8 +3,34 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
   <title>WT Reticle Studio Pro - War Thunder .blk Custom Sight &amp; Art Editor</title>
-  <link rel="stylesheet" href="styles.css" />
+  <script>
+    (function () {
+      var isWeb = window.location.protocol === 'http:' || window.location.protocol === 'https:';
+      var qs = isWeb ? ('?v=' + Date.now()) : '';
+      window.__WT_ASSET_QS = qs;
+      window.__WT_CSS_READY = false;
+
+      var link = document.createElement('link');
+      link.rel = 'stylesheet';
+      link.href = 'styles.css' + qs;
+      function markCssReady() {
+        if (window.__WT_CSS_READY) return;
+        window.__WT_CSS_READY = true;
+        if (typeof window.__WT_ON_CSS_READY === 'function') {
+          window.__WT_ON_CSS_READY();
+        }
+        window.dispatchEvent(new Event('resize'));
+      }
+      link.onload = markCssReady;
+      link.onerror = markCssReady;
+      document.head.appendChild(link);
+    })();
+  </script>
+  <noscript><link rel="stylesheet" href="styles.css" /></noscript>
 </head>
 <body>
   <div class="app-shell">
@@ -842,8 +868,34 @@
   <!-- Toast Notifications -->
   <div class="toast-container" id="toastContainer"></div>
 
-  <script src="presets.js"></script>
-  <script src="blk-parser.js"></script>
-  <script src="app.js"></script>
+  <script>
+    (function () {
+      var qs = window.__WT_ASSET_QS || '';
+      var appAppended = false;
+
+      function appendScript(src) {
+        var s = document.createElement('script');
+        s.src = src + qs;
+        s.async = false;
+        document.body.appendChild(s);
+      }
+
+      appendScript('presets.js');
+      appendScript('blk-parser.js');
+
+      function bootApp() {
+        if (appAppended) return;
+        appAppended = true;
+        appendScript('app.js');
+      }
+
+      if (window.__WT_CSS_READY) {
+        bootApp();
+      } else {
+        window.__WT_ON_CSS_READY = bootApp;
+        setTimeout(bootApp, 1000);
+      }
+    })();
+  </script>
 </body>
 </html>

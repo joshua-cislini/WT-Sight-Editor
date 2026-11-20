@@ -158,6 +158,8 @@ All core parameters from the [War Thunder CDK `creation_sight` documentation](ht
 - **Sight does not show up or fails to load in War Thunder**:
   - **The sight name must not have spaces in it.** Make sure your `.blk` filename uses underscores or hyphens instead of spaces (for example, use `my_sight.blk` instead of `my sight.blk`).
   - If placing the sight inside `UserSights\all_tanks\`, verify that the **`matchExpClass (all_tanks)`** vehicle classes are checked in **Sight Global Settings (CDK)** before saving.
+- **Drawings are missing lines after loading in War Thunder**:
+  - Your drawing could have too many lines (War Thunder does not specify a limit). You could try using the `Optimize Sight` feature and retry.
 
 ---
 

@@ -5337,6 +5337,10 @@
   initUI();
   resizeCanvas();
   window.addEventListener('resize', resizeCanvas);
+  window.addEventListener('load', resizeCanvas);
+  if (typeof ResizeObserver !== 'undefined') {
+    new ResizeObserver(resizeCanvas).observe(stage);
+  }
   setTool('select');
 
   const initialNames = naturalSortNames(Object.keys(state.sightsCatalog));
