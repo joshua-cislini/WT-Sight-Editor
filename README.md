@@ -1,4 +1,4 @@
-![https://live.warthunder.com/post/1196320/en/](https://cdn-live.warthunder.com/uploads/da/29/96/3aed6ab6e288b345016bcbbf3c558a93f6_mq/WhatsApp+Image+2026-11-21+at+23.00.38.jpg)
+[![Image preview](https://cdn-live.warthunder.com/uploads/da/29/96/3aed6ab6e288b345016bcbbf3c558a93f6_mq/WhatsApp+Image+2026-11-21+at+23.00.38.jpg)](https://live.warthunder.com/post/1196320/en/)
 
 # WT Reticle Studio Pro: War Thunder `.blk` Custom Sight & Art Editor
 
