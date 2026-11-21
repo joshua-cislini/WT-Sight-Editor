@@ -1361,6 +1361,26 @@
     </div>
   </div>
 
+  <!-- Import / Complexity Advisory & Confirmation Modal -->
+  <div class="modal-backdrop" id="importAdvisoryModal" hidden>
+    <div class="modal-dialog" style="max-width: 560px;">
+      <div class="modal-header">
+        <div class="modal-title">
+          <strong id="importAdvisoryTitle">Drawing Import Advisory</strong>
+          <span class="mono muted-note" id="importAdvisorySubtitle">Review before continuing</span>
+        </div>
+        <button id="btnCloseAdvisory" class="btn btn-icon" title="Cancel">✕</button>
+      </div>
+      <div class="modal-body advisory-modal-body" id="importAdvisoryBody"></div>
+      <div class="modal-footer advisory-modal-footer">
+        <button id="btnAdvisoryCancel" class="btn btn-ghost">Cancel</button>
+        <button id="btnAdvisoryChop" class="btn btn-secondary" hidden>Chop to 8,000 Limit</button>
+        <button id="btnAdvisoryImportAll" class="btn btn-secondary">Continue &amp; Import All</button>
+        <button id="btnAdvisoryAutoFit" class="btn btn-primary" hidden>Auto-Simplify to Fit</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Task Progress Overlay -->
   <div class="progress-overlay" id="taskProgressOverlay" hidden role="status" aria-live="polite">
     <div class="progress-card">

@@ -847,7 +847,28 @@
           break;
         }
       }
-      if (!earFound) break;
+      if (!earFound) {
+        // Fallback for self-touching or near-degenerate polygons so remaining triangles are never dropped
+        let bestIdx = 0;
+        let bestCross = -Infinity;
+        for (let i = 0; i < poly.length; i++) {
+          const prev = poly[(i - 1 + poly.length) % poly.length];
+          const curr = poly[i];
+          const next = poly[(i + 1) % poly.length];
+          const c = cross(prev, curr, next);
+          if (c > bestCross) {
+            bestCross = c;
+            bestIdx = i;
+          }
+        }
+        const prev = poly[(bestIdx - 1 + poly.length) % poly.length];
+        const curr = poly[bestIdx];
+        const next = poly[(bestIdx + 1) % poly.length];
+        if (Math.abs(bestCross) > 1e-14) {
+          tris.push([prev, curr, next]);
+        }
+        poly.splice(bestIdx, 1);
+      }
     }
     if (poly.length === 3) {
       tris.push([poly[0], poly[1], poly[2]]);
@@ -6810,23 +6831,150 @@
     }, 36);
   }
 
+  function askImportAdvisory({
+    title = 'Drawing Import Advisory',
+    subtitle = 'Review before continuing',
+    alertText = '',
+    bullets = [],
+    canAutoFit = false,
+    canChop = false
+  }) {
+    const modal = $('importAdvisoryModal');
+    if (!modal) return Promise.resolve('all');
+
+    const progressOverlay = $('taskProgressOverlay');
+    const wasProgressVisible = progressOverlay && !progressOverlay.hidden;
+    if (wasProgressVisible) progressOverlay.hidden = true;
+
+    $('importAdvisoryTitle').textContent = title;
+    $('importAdvisorySubtitle').textContent = subtitle;
+
+    const body = $('importAdvisoryBody');
+    body.innerHTML = '';
+    if (alertText) {
+      const alertDiv = document.createElement('div');
+      alertDiv.className = 'advisory-alert';
+      alertDiv.textContent = alertText;
+      body.appendChild(alertDiv);
+    }
+    if (bullets.length > 0) {
+      const ul = document.createElement('ul');
+      ul.className = 'advisory-list';
+      for (const b of bullets) {
+        const li = document.createElement('li');
+        li.textContent = b;
+        ul.appendChild(li);
+      }
+      body.appendChild(ul);
+    }
+    const promptP = document.createElement('p');
+    promptP.style.margin = '4px 0 0';
+    promptP.style.fontWeight = '500';
+    promptP.textContent = 'Would you like to continue?';
+    body.appendChild(promptP);
+
+    const btnCancel = $('btnAdvisoryCancel');
+    const btnClose = $('btnCloseAdvisory');
+    const btnChop = $('btnAdvisoryChop');
+    const btnAll = $('btnAdvisoryImportAll');
+    const btnAutoFit = $('btnAdvisoryAutoFit');
+
+    btnAutoFit.hidden = !canAutoFit;
+    btnChop.hidden = !canChop;
+
+    modal.hidden = false;
+
+    return new Promise((resolve) => {
+      function cleanup(choice) {
+        btnCancel.removeEventListener('click', onCancel);
+        btnClose.removeEventListener('click', onCancel);
+        btnChop.removeEventListener('click', onChop);
+        btnAll.removeEventListener('click', onAll);
+        btnAutoFit.removeEventListener('click', onAutoFit);
+        modal.hidden = true;
+        if (wasProgressVisible && choice !== 'cancel') {
+          progressOverlay.hidden = false;
+        }
+        resolve(choice);
+      }
+      function onCancel() { cleanup('cancel'); }
+      function onChop() { cleanup('chop'); }
+      function onAll() { cleanup('all'); }
+      function onAutoFit() { cleanup('autofit'); }
+
+      btnCancel.addEventListener('click', onCancel);
+      btnClose.addEventListener('click', onCancel);
+      btnChop.addEventListener('click', onChop);
+      btnAll.addEventListener('click', onAll);
+      btnAutoFit.addEventListener('click', onAutoFit);
+    });
+  }
+
   async function commitAutoTraceToDocument() {
     if (!state.refImage.img) return;
     showTaskProgress('Auto-Drawing Image...', state.refImage.name || 'Vectorizing strokes', 15);
     try {
       await nextPaintFrame();
-      const res = computeImageVectorTrace();
+      let res = computeImageVectorTrace();
       if (res.lines.length === 0 && res.quads.length === 0) {
         showToast('No strokes detected. Try raising Sensitivity or toggling Invert B/W', 'warn');
         return;
       }
 
+      const replacePrev = $('chkTraceReplace').checked && state.lastTraceIds.size > 0;
+      const baseExisting =
+        (replacePrev ? state.doc.lines.filter((l) => !state.lastTraceIds.has(l.id)).length : state.doc.lines.length) +
+        (replacePrev ? state.doc.quads.filter((q) => !state.lastTraceIds.has(q.id)).length : state.doc.quads.length) +
+        state.doc.circles.length +
+        state.doc.texts.length;
+      const totalNew = res.lines.length + res.quads.length;
+
+      if (baseExisting + totalNew > WT_RECOMMENDED_LIMIT) {
+        const budget = Math.max(200, WT_RECOMMENDED_LIMIT - baseExisting);
+        const choice = await askImportAdvisory({
+          title: 'High Complexity Auto-Draw Advisory',
+          subtitle: `${state.refImage.name || 'Reference Image'} (${totalNew} primitives)`,
+          alertText: `This trace generates ${totalNew} primitives (total sight complexity: ${baseExisting + totalNew} / ${WT_RECOMMENDED_LIMIT}). War Thunder may chop or fail to render sights above ${WT_RECOMMENDED_LIMIT} primitives in-game.`,
+          bullets: [
+            `Auto-Simplify to Fit: Increases curve smoothing so the entire drawing fits within ${WT_RECOMMENDED_LIMIT} primitives without chopping off shapes.`,
+            `Chop to ${WT_RECOMMENDED_LIMIT} Limit: Keeps full detail on the first ${budget} primitives and truncates the remaining ${Math.max(0, totalNew - budget)} primitives.`,
+            `Continue & Import All: Imports all ${totalNew} primitives without chopping.`
+          ],
+          canAutoFit: true,
+          canChop: true
+        });
+        if (choice === 'cancel') {
+          showToast('Auto-Draw canceled', 'warn');
+          return;
+        }
+        if (choice === 'autofit') {
+          const origSimp = parseFloat($('rngTraceSimplify').value) || 0.65;
+          for (const trySimp of [1.2, 1.8, 2.5, 3.5]) {
+            if (trySimp <= origSimp) continue;
+            $('rngTraceSimplify').value = String(trySimp);
+            $('lblTraceSimplify').textContent = `${trySimp.toFixed(2)}px`;
+            res = computeImageVectorTrace();
+            if (baseExisting + res.lines.length + res.quads.length <= WT_RECOMMENDED_LIMIT) break;
+          }
+        } else if (choice === 'chop') {
+          let rem = budget;
+          if (res.quads.length > rem) {
+            res.quads = res.quads.slice(0, rem);
+            res.lines = [];
+          } else {
+            rem -= res.quads.length;
+            if (res.lines.length > rem) res.lines = res.lines.slice(0, rem);
+          }
+        }
+      }
+
       updateTaskProgress(`Adding ${res.lines.length} lines & ${res.quads.length} quads...`, 70);
       await nextPaintFrame();
 
-      if ($('chkTraceReplace').checked && state.lastTraceIds.size > 0) {
+      if (replacePrev) {
         state.doc.lines = state.doc.lines.filter((l) => !state.lastTraceIds.has(l.id));
         state.doc.quads = state.doc.quads.filter((q) => !state.lastTraceIds.has(q.id));
+        state.doc.texts = state.doc.texts.filter((t) => !state.lastTraceIds.has(t.id));
         state.lastTraceIds.clear();
       }
 
@@ -6887,6 +7035,7 @@
     const removedCount = state.lastTraceIds.size;
     state.doc.lines = state.doc.lines.filter((l) => !state.lastTraceIds.has(l.id));
     state.doc.quads = state.doc.quads.filter((q) => !state.lastTraceIds.has(q.id));
+    state.doc.texts = state.doc.texts.filter((t) => !state.lastTraceIds.has(t.id));
     for (const id of state.lastTraceIds) state.selection.delete(id);
     state.lastTraceIds.clear();
     $('btnUndoTrace').disabled = true;
@@ -6897,15 +7046,134 @@
   }
 
   /**
-   * Direct SVG vector importer: flattens SVG shapes and compound paths directly using native DOM geometry APIs.
+   * Vectorize extracted SVG text labels into crisp single-stroke letterform polylines via an offscreen canvas.
+   */
+  function vectorizeSvgTextLabels(textItems, svgPtToWorld) {
+    const outPolylines = [];
+    const fallbackNativeTexts = [];
+
+    for (const item of textItems) {
+      const textStr = item.text.trim();
+      if (!textStr) continue;
+      if (item.svgW <= 1e-4 || item.svgH <= 1e-4) {
+        fallbackNativeTexts.push(item);
+        continue;
+      }
+
+      // Render this text label at high resolution (~56px cap height) for clean centerline skeletonization
+      const lines = textStr.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+      if (!lines.length) continue;
+
+      const pxPerLine = 54;
+      const pad = 14;
+      const estCharW = pxPerLine * 0.65;
+      const maxChars = Math.max(...lines.map((l) => l.length), 1);
+      const cw = Math.max(96, Math.min(2048, Math.ceil(maxChars * estCharW + pad * 3)));
+      const ch = Math.max(72, Math.min(1024, Math.ceil(lines.length * pxPerLine * 1.28 + pad * 2)));
+
+      const tc = document.createElement('canvas');
+      tc.width = cw;
+      tc.height = ch;
+      const tctx = tc.getContext('2d');
+      tctx.fillStyle = '#ffffff';
+      tctx.fillRect(0, 0, cw, ch);
+
+      tctx.fillStyle = '#000000';
+      const weight = item.fontWeight && item.fontWeight !== 'normal' && item.fontWeight !== '400' ? '600' : '500';
+      const style = item.fontStyle === 'italic' ? 'italic' : 'normal';
+      const family = item.fontFamily || 'sans-serif';
+      tctx.font = `${style} ${weight} ${pxPerLine}px ${family}`;
+      tctx.textAlign = 'center';
+      tctx.textBaseline = 'middle';
+
+      const totalBlockH = lines.length * pxPerLine * 1.2;
+      const startY = ch * 0.5 - totalBlockH * 0.5 + pxPerLine * 0.6;
+      for (let li = 0; li < lines.length; li++) {
+        tctx.fillText(lines[li], cw * 0.5, startY + li * pxPerLine * 1.2);
+      }
+
+      const imgD = tctx.getImageData(0, 0, cw, ch).data;
+      const bin = new Uint8Array(cw * ch);
+      let minX = cw, maxX = 0, minY = ch, maxY = 0, inkCount = 0;
+      for (let y = 0; y < ch; y++) {
+        for (let x = 0; x < cw; x++) {
+          const i = y * cw + x;
+          if (imgD[i * 4] < 150) {
+            bin[i] = 1;
+            inkCount++;
+            if (x < minX) minX = x;
+            if (x > maxX) maxX = x;
+            if (y < minY) minY = y;
+            if (y > maxY) maxY = y;
+          }
+        }
+      }
+
+      if (inkCount < 6 || maxX <= minX || maxY <= minY) {
+        fallbackNativeTexts.push(item);
+        continue;
+      }
+
+      const thinned = thinMaskZhangSuen(bin, cw, ch);
+      pruneSkeletonSpurs(thinned, cw, ch, 2);
+      const chains = extractSkeletonGraphAndMerge(thinned, cw, ch);
+      if (!chains.length) {
+        fallbackNativeTexts.push(item);
+        continue;
+      }
+
+      const inkW = Math.max(1, maxX - minX);
+      const inkH = Math.max(1, maxY - minY);
+      const inkAspect = inkW / inkH;
+      const boxAspect = item.svgW / item.svgH;
+
+      // Fit rendered ink bounds proportionally inside the measured SVG text bounding box
+      let fitW = item.svgW;
+      let fitH = item.svgH;
+      if (inkAspect > boxAspect) {
+        fitH = fitW / inkAspect;
+      } else {
+        fitW = fitH * inkAspect;
+      }
+      const boxCx = item.svgX + item.svgW * 0.5;
+      const boxCy = item.svgY + item.svgH * 0.5;
+      const targetX0 = boxCx - fitW * 0.5;
+      const targetY0 = boxCy - fitH * 0.5;
+
+      for (const chItem of chains) {
+        if (chItem.pts.length < 2) continue;
+        const { pts: sm, corners } = smoothPolylineTaubin(chItem.pts, 2, { closed: chItem.closed });
+        const simp = piecewiseRdpSimplify(sm, corners, 0.55, chItem.closed);
+        const worldPts = simp.map((p) => {
+          const sx = targetX0 + ((p.x - minX) / inkW) * fitW;
+          const sy = targetY0 + ((p.y - minY) / inkH) * fitH;
+          return svgPtToWorld(sx, sy);
+        });
+        if (worldPts.length >= 2) {
+          outPolylines.push({ pts: worldPts, closed: chItem.closed });
+        }
+      }
+    }
+
+    return { textPolylines: outPolylines, fallbackNativeTexts };
+  }
+
+  /**
+   * Direct SVG vector importer: flattens SVG shapes, compound paths, <use> instances,
+   * and <text> / <foreignObject> labels directly using native DOM geometry APIs.
    */
   async function importSvgFile(svgText, fileName = 'artwork.svg') {
     showTaskProgress(`Importing SVG: ${fileName}`, 'Parsing vector DOM...', 5);
     try {
       await nextPaintFrame();
       const parser = new DOMParser();
-      const xml = parser.parseFromString(svgText, 'image/svg+xml');
-      const svgEl = xml.querySelector('svg');
+      let xml = parser.parseFromString(svgText, 'image/svg+xml');
+      let svgEl = xml.querySelector('svg');
+      if (!svgEl || xml.querySelector('parsererror')) {
+        const htmlFallback = parser.parseFromString(svgText, 'text/html');
+        const fallbackSvg = htmlFallback.querySelector('svg');
+        if (fallbackSvg) svgEl = fallbackSvg;
+      }
       if (!svgEl) {
         showToast('Invalid SVG file', 'error');
         return;
@@ -6913,15 +7181,82 @@
 
       const ns = 'http://www.w3.org/2000/svg';
       const host = document.createElement('div');
-      host.style.cssText = 'position:fixed;left:-99999px;top:-99999px;width:0;height:0;overflow:hidden;opacity:0;pointer-events:none;';
+      host.style.cssText = 'position:fixed;left:-99999px;top:-99999px;width:1024px;height:1024px;overflow:visible;opacity:0;pointer-events:none;';
       const cloned = document.importNode(svgEl, true);
       host.appendChild(cloned);
       document.body.appendChild(host);
 
-      const closedFillGroups = [];
-      const openPolylines = [];
+      // Per-element compound fill groups:Array<Array<Array<{x,y}>>> (each element is an array of closed loops for ONE SVG shape)
+      const elementFillGroups = [];
+      let openPolylines = [];
+      let extractedTextItems = [];
+      let fallbackNativeTexts = [];
+      let skippedRasterCount = 0;
+      let skippedUnsupportedCount = 0;
+      let embeddedRasterDataUrl = null;
+      let vbW = 100, vbH = 100, targetW = 0.45, targetH = 0.45;
+      let simpWorldEps = 0.0004;
 
       try {
+        // 1. Expand <use href="#id"> / <use xlink:href="#id"> instances (up to 3 nesting levels)
+        for (let pass = 0; pass < 3; pass++) {
+          const uses = Array.from(cloned.querySelectorAll('use')).filter(
+            (u) => !u.closest('defs, clipPath, mask, marker, pattern, symbol')
+          );
+          if (!uses.length) break;
+          for (const u of uses) {
+            const href = (u.getAttribute('href') || u.getAttribute('xlink:href') || '').trim();
+            if (!href.startsWith('#')) {
+              u.remove();
+              continue;
+            }
+            const refId = href.slice(1);
+            const target = cloned.getElementById ? cloned.getElementById(refId) : cloned.querySelector(`[id="${CSS.escape(refId)}"]`);
+            if (!target) {
+              u.remove();
+              continue;
+            }
+            const g = document.createElementNS(ns, 'g');
+            const ux = parseFloat(u.getAttribute('x')) || 0;
+            const uy = parseFloat(u.getAttribute('y')) || 0;
+            const uTrans = u.getAttribute('transform') || '';
+            const translateStr = (ux !== 0 || uy !== 0) ? `translate(${ux}, ${uy})` : '';
+            const fullTrans = [uTrans, translateStr].filter(Boolean).join(' ');
+            if (fullTrans) g.setAttribute('transform', fullTrans);
+            for (const attr of ['fill', 'stroke', 'stroke-width', 'style', 'class', 'opacity']) {
+              if (u.hasAttribute(attr)) g.setAttribute(attr, u.getAttribute(attr));
+            }
+            if (target.tagName.toLowerCase() === 'symbol') {
+              for (const child of Array.from(target.childNodes)) {
+                g.appendChild(child.cloneNode(true));
+              }
+            } else {
+              const copy = target.cloneNode(true);
+              copy.removeAttribute('id');
+              g.appendChild(copy);
+            }
+            u.replaceWith(g);
+          }
+        }
+
+        // 2. Deduplicate <switch> elements (draw.io / diagrams.net wraps both <foreignObject> and fallback <text>)
+        for (const sw of Array.from(cloned.querySelectorAll('switch'))) {
+          const children = Array.from(sw.children);
+          let keptBranch = null;
+          for (const ch of children) {
+            const txt = (ch.textContent || '').trim();
+            if (/text is not supported|viewer does not support/i.test(txt)) {
+              ch.setAttribute('data-wt-skip', '1');
+              continue;
+            }
+            if (!keptBranch && (txt.length > 0 || ch.querySelector('path, rect, circle, ellipse, polygon, polyline, line, text, foreignObject'))) {
+              keptBranch = ch;
+            } else {
+              ch.setAttribute('data-wt-skip', '1');
+            }
+          }
+        }
+
         const vb = cloned.viewBox && cloned.viewBox.baseVal && cloned.viewBox.baseVal.width > 0
           ? cloned.viewBox.baseVal
           : null;
@@ -6929,18 +7264,24 @@
         try { bbox = cloned.getBBox(); } catch (_) { bbox = null; }
         const vbX = vb ? vb.x : (bbox && bbox.width > 0 ? bbox.x : 0);
         const vbY = vb ? vb.y : (bbox && bbox.height > 0 ? bbox.y : 0);
-        const vbW = vb ? vb.width : (parseFloat(cloned.getAttribute('width')) || (bbox && bbox.width > 0 ? bbox.width : 100));
-        const vbH = vb ? vb.height : (parseFloat(cloned.getAttribute('height')) || (bbox && bbox.height > 0 ? bbox.height : 100));
-        const svgAspect = vbW / (vbH || 1);
+        vbW = vb ? vb.width : (parseFloat(cloned.getAttribute('width')) || (bbox && bbox.width > 0 ? bbox.width : 100));
+        vbH = vb ? vb.height : (parseFloat(cloned.getAttribute('height')) || (bbox && bbox.height > 0 ? bbox.height : 100));
 
-        const targetH = state.refImage.scale || 0.45;
-        const targetW = targetH * svgAspect;
+        // Ensure cloned SVG has explicit pixel width/height matching viewBox so <foreignObject> HTML flex/table layouts measure accurately
+        cloned.setAttribute('width', `${vbW}px`);
+        cloned.setAttribute('height', `${vbH}px`);
+        if (!vb) cloned.setAttribute('viewBox', `${vbX} ${vbY} ${vbW} ${vbH}`);
+
+        const svgAspect = vbW / (vbH || 1);
+        targetH = state.refImage.scale || 0.45;
+        targetW = targetH * svgAspect;
         const cx = state.refImage.x || 0;
         const cy = state.refImage.y || 0;
         const rotRad = ((state.refImage.rotation || 0) * Math.PI) / 180;
         const cosR = Math.cos(rotRad), sinR = Math.sin(rotRad);
         const svgRootCtm = cloned.getCTM();
         const invRootCtm = svgRootCtm ? svgRootCtm.inverse() : null;
+        const svgClientRect = cloned.getBoundingClientRect();
 
         function svgPtToWorld(sx, sy) {
           const lx = ((sx - vbX) / (vbW || 1) - 0.5) * targetW;
@@ -6951,30 +7292,125 @@
           };
         }
 
-        const simpWorldEps = Math.max(0.00018, ((parseFloat($('rngTraceSimplify')?.value) || 0.65) / 640) * Math.max(targetW, targetH));
+        simpWorldEps = Math.max(0.00018, ((parseFloat($('rngTraceSimplify')?.value) || 0.65) / 640) * Math.max(targetW, targetH));
 
-        // Split multi-M <path> d strings into single subpaths with absolute start coordinates
+        // 3. Check for embedded <image> elements
+        for (const imgEl of Array.from(cloned.querySelectorAll('image'))) {
+          if (imgEl.closest('defs, clipPath, mask, marker, pattern, symbol, [data-wt-skip="1"]')) continue;
+          const href = (imgEl.getAttribute('href') || imgEl.getAttribute('xlink:href') || '').trim();
+          if (href.startsWith('data:image/')) {
+            embeddedRasterDataUrl = href;
+          }
+          skippedRasterCount++;
+        }
+
+        // 4. Extract visible text labels from both SVG <text>/<tspan> and HTML <foreignObject>
+        const walker = document.createTreeWalker(cloned, NodeFilter.SHOW_TEXT, null);
+        let tNode;
+        while ((tNode = walker.nextNode())) {
+          const rawStr = (tNode.nodeValue || '').replace(/\s+/g, ' ').trim();
+          if (!rawStr) continue;
+          if (/^text is not supported|viewer does not support/i.test(rawStr)) continue;
+          const pEl = tNode.parentElement;
+          if (!pEl) continue;
+          if (pEl.closest('defs, clipPath, mask, marker, pattern, symbol, style, script, title, desc, metadata, [data-wt-skip="1"]')) continue;
+          const cs = window.getComputedStyle(pEl);
+          if (cs.display === 'none' || cs.visibility === 'hidden' || parseFloat(cs.opacity) === 0) continue;
+
+          const range = document.createRange();
+          range.selectNodeContents(tNode);
+          const r = range.getBoundingClientRect();
+          if (r.width > 0.5 && r.height > 0.5 && svgClientRect.width > 0 && svgClientRect.height > 0) {
+            const svgX = vbX + ((r.left - svgClientRect.left) / svgClientRect.width) * vbW;
+            const svgY = vbY + ((r.top - svgClientRect.top) / svgClientRect.height) * vbH;
+            const svgBoxW = (r.width / svgClientRect.width) * vbW;
+            const svgBoxH = (r.height / svgClientRect.height) * vbH;
+            extractedTextItems.push({
+              text: rawStr,
+              svgX,
+              svgY,
+              svgW: svgBoxW,
+              svgH: svgBoxH,
+              fontFamily: cs.fontFamily,
+              fontWeight: cs.fontWeight,
+              fontStyle: cs.fontStyle
+            });
+          } else {
+            // Fallback for SVG <text> where range bounding rect is 0
+            const textOwner = pEl.closest('text') || pEl;
+            let tb = null;
+            try { tb = textOwner.getBBox(); } catch (_) { tb = null; }
+            if (tb && tb.width > 0 && tb.height > 0) {
+              const tCtm = textOwner.getCTM();
+              const relM = tCtm && invRootCtm ? invRootCtm.multiply(tCtm) : tCtm;
+              const p0 = relM ? { x: tb.x * relM.a + tb.y * relM.c + relM.e, y: tb.x * relM.b + tb.y * relM.d + relM.f } : { x: tb.x, y: tb.y };
+              const p1 = relM
+                ? { x: (tb.x + tb.width) * relM.a + (tb.y + tb.height) * relM.c + relM.e, y: (tb.x + tb.width) * relM.b + (tb.y + tb.height) * relM.d + relM.f }
+                : { x: tb.x + tb.width, y: tb.y + tb.height };
+              extractedTextItems.push({
+                text: rawStr,
+                svgX: Math.min(p0.x, p1.x),
+                svgY: Math.min(p0.y, p1.y),
+                svgW: Math.max(1, Math.abs(p1.x - p0.x)),
+                svgH: Math.max(1, Math.abs(p1.y - p0.y)),
+                fontFamily: cs.fontFamily,
+                fontWeight: cs.fontWeight,
+                fontStyle: cs.fontStyle
+              });
+            }
+          }
+        }
+
+        // Spec-compliant multi-M <path> splitter (handles concatenated 0/1 arc flags and chained decimals like .5.5)
         function splitPathSubpaths(dStr) {
-          const tokens = dStr.match(/[a-zA-Z]|[-+]?(?:\d*\.\d+|\d+\.?)(?:[eE][-+]?\d+)?/g);
-          if (!tokens) return [];
           const subpaths = [];
           let curD = '';
           let x = 0, y = 0, sx0 = 0, sy0 = 0;
           let cmd = '';
-          let i = 0;
-          const num = () => (i < tokens.length && !/^[a-zA-Z]$/.test(tokens[i]) ? parseFloat(tokens[i++]) : NaN);
+          let pos = 0;
+          const len = dStr.length;
 
-          while (i < tokens.length) {
-            if (/^[a-zA-Z]$/.test(tokens[i])) {
-              cmd = tokens[i++];
+          function skipWsComma() {
+            while (pos < len && /[\s,]/.test(dStr[pos])) pos++;
+          }
+          function readCmd() {
+            skipWsComma();
+            if (pos < len && /[a-zA-Z]/.test(dStr[pos])) {
+              return dStr[pos++];
+            }
+            return '';
+          }
+          function readFlag() {
+            skipWsComma();
+            if (pos < len && (dStr[pos] === '0' || dStr[pos] === '1')) {
+              return parseInt(dStr[pos++], 10);
+            }
+            return NaN;
+          }
+          function readNum() {
+            skipWsComma();
+            if (pos >= len) return NaN;
+            const sub = dStr.slice(pos);
+            const m = sub.match(/^[-+]?(?:\d*\.\d+|\d+\.?)(?:[eE][-+]?\d+)?/);
+            if (!m) return NaN;
+            pos += m[0].length;
+            return parseFloat(m[0]);
+          }
+
+          while (pos < len) {
+            const nextC = readCmd();
+            if (nextC) {
+              cmd = nextC;
               if (cmd === 'Z' || cmd === 'z') {
                 curD += ' Z';
                 x = sx0; y = sy0;
                 continue;
               }
             }
+            if (!cmd) break;
+
             if (cmd === 'M' || cmd === 'm') {
-              const nx = num(), ny = num();
+              const nx = readNum(), ny = readNum();
               if (Number.isNaN(nx) || Number.isNaN(ny)) break;
               x = cmd === 'm' ? x + nx : nx;
               y = cmd === 'm' ? y + ny : ny;
@@ -6983,41 +7419,41 @@
               curD = `M ${x} ${y}`;
               cmd = cmd === 'm' ? 'l' : 'L';
             } else if (cmd === 'L' || cmd === 'l') {
-              const nx = num(), ny = num();
+              const nx = readNum(), ny = readNum();
               if (Number.isNaN(nx) || Number.isNaN(ny)) break;
               x = cmd === 'l' ? x + nx : nx;
               y = cmd === 'l' ? y + ny : ny;
               curD += ` L ${x} ${y}`;
             } else if (cmd === 'H' || cmd === 'h') {
-              const nx = num();
+              const nx = readNum();
               if (Number.isNaN(nx)) break;
               x = cmd === 'h' ? x + nx : nx;
               curD += ` L ${x} ${y}`;
             } else if (cmd === 'V' || cmd === 'v') {
-              const ny = num();
+              const ny = readNum();
               if (Number.isNaN(ny)) break;
               y = cmd === 'v' ? y + ny : ny;
               curD += ` L ${x} ${y}`;
             } else if (cmd === 'C' || cmd === 'c') {
-              const a = num(), b = num(), c = num(), d = num(), e = num(), f = num();
+              const a = readNum(), b = readNum(), c = readNum(), d = readNum(), e = readNum(), f = readNum();
               if ([a, b, c, d, e, f].some(Number.isNaN)) break;
               const rel = cmd === 'c';
               curD += ` C ${rel ? x + a : a} ${rel ? y + b : b} ${rel ? x + c : c} ${rel ? y + d : d} ${rel ? x + e : e} ${rel ? y + f : f}`;
               x = rel ? x + e : e; y = rel ? y + f : f;
             } else if (cmd === 'S' || cmd === 's' || cmd === 'Q' || cmd === 'q') {
-              const a = num(), b = num(), c = num(), d = num();
+              const a = readNum(), b = readNum(), c = readNum(), d = readNum();
               if ([a, b, c, d].some(Number.isNaN)) break;
               const rel = cmd === 's' || cmd === 'q';
               const op = (cmd === 'S' || cmd === 's') ? 'S' : 'Q';
               curD += ` ${op} ${rel ? x + a : a} ${rel ? y + b : b} ${rel ? x + c : c} ${rel ? y + d : d}`;
               x = rel ? x + c : c; y = rel ? y + d : d;
             } else if (cmd === 'T' || cmd === 't') {
-              const a = num(), b = num();
+              const a = readNum(), b = readNum();
               if ([a, b].some(Number.isNaN)) break;
               x = cmd === 't' ? x + a : a; y = cmd === 't' ? y + b : b;
               curD += ` T ${x} ${y}`;
             } else if (cmd === 'A' || cmd === 'a') {
-              const rx = num(), ry = num(), rot = num(), la = num(), swp = num(), a = num(), b = num();
+              const rx = readNum(), ry = readNum(), rot = readNum(), la = readFlag(), swp = readFlag(), a = readNum(), b = readNum();
               if ([rx, ry, rot, la, swp, a, b].some(Number.isNaN)) break;
               const nx = cmd === 'a' ? x + a : a;
               const ny = cmd === 'a' ? y + b : b;
@@ -7031,22 +7467,60 @@
           return subpaths;
         }
 
+        function isNearWhiteFill(colorStr) {
+          if (!colorStr) return false;
+          const s = colorStr.trim().toLowerCase();
+          if (s === '#fff' || s === '#ffffff' || s === 'white') return true;
+          const m = s.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
+          if (m) {
+            return parseInt(m[1], 10) > 242 && parseInt(m[2], 10) > 242 && parseInt(m[3], 10) > 242;
+          }
+          return false;
+        }
+
+        function loopEnclosesAnyText(worldLoopPts) {
+          if (!extractedTextItems.length || worldLoopPts.length < 3) return false;
+          let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+          for (const p of worldLoopPts) {
+            if (p.x < minX) minX = p.x;
+            if (p.x > maxX) maxX = p.x;
+            if (p.y < minY) minY = p.y;
+            if (p.y > maxY) maxY = p.y;
+          }
+          for (const ti of extractedTextItems) {
+            const tc = svgPtToWorld(ti.svgX + ti.svgW * 0.5, ti.svgY + ti.svgH * 0.5);
+            if (tc.x >= minX && tc.x <= maxX && tc.y >= minY && tc.y <= maxY) {
+              if (pointInPolygon(tc.x, tc.y, worldLoopPts)) return true;
+            }
+          }
+          return false;
+        }
+
+        const solidStyle = $('selTraceSolidStyle')?.value || 'fill';
         const shapes = cloned.querySelectorAll('path, circle, ellipse, rect, polygon, polyline, line');
         const totalShapes = shapes.length;
+
         for (let si = 0; si < totalShapes; si++) {
           if (si > 0 && si % 12 === 0) {
-            updateTaskProgress(`Flattening vector shape ${si + 1} / ${totalShapes}...`, 10 + (si / totalShapes) * 65);
+            updateTaskProgress(`Flattening vector shape ${si + 1} / ${totalShapes}...`, 10 + (si / totalShapes) * 58);
             await nextPaintFrame();
           }
           const el = shapes[si];
-          if (el.closest('defs, clipPath, mask, marker, pattern, symbol')) continue;
+          if (el.closest('defs, clipPath, mask, marker, pattern, symbol, [data-wt-skip="1"]')) continue;
           const cs = window.getComputedStyle(el);
-          if (cs.display === 'none' || cs.visibility === 'hidden') continue;
+          if (cs.display === 'none' || cs.visibility === 'hidden' || parseFloat(cs.opacity) === 0) continue;
 
-          const fillVal = (el.getAttribute('fill') || cs.fill || '').trim().toLowerCase();
-          const strokeVal = (el.getAttribute('stroke') || cs.stroke || '').trim().toLowerCase();
-          const hasFill = fillVal !== 'none' && fillVal !== 'transparent';
-          const hasStroke = strokeVal !== '' && strokeVal !== 'none' && strokeVal !== 'transparent';
+          const fillAttr = (el.getAttribute('fill') || '').trim().toLowerCase();
+          const strokeAttr = (el.getAttribute('stroke') || '').trim().toLowerCase();
+          const fillVal = (fillAttr || cs.fill || '').trim().toLowerCase();
+          const strokeVal = (strokeAttr || cs.stroke || '').trim().toLowerCase();
+          const fillOp = parseFloat(el.getAttribute('fill-opacity') ?? cs.fillOpacity ?? '1');
+          const strokeOp = parseFloat(el.getAttribute('stroke-opacity') ?? cs.strokeOpacity ?? '1');
+
+          const hasFill = fillVal !== 'none' && fillVal !== 'transparent' && fillOp > 0.02;
+          const hasStroke = strokeVal !== '' && strokeVal !== 'none' && strokeVal !== 'transparent' && strokeOp > 0.02;
+          if (!hasFill && !hasStroke) continue;
+          const nearWhiteUnstroked = hasFill && !hasStroke && isNearWhiteFill(fillVal) && !$('chkTraceInvert')?.checked;
 
           const ctm = el.getCTM();
           const relMtx = ctm && invRootCtm ? invRootCtm.multiply(ctm) : ctm;
@@ -7054,71 +7528,141 @@
             ? { x: p.x * relMtx.a + p.y * relMtx.c + relMtx.e, y: p.x * relMtx.b + p.y * relMtx.d + relMtx.f }
             : { x: p.x, y: p.y };
 
-          const sampleGeometryEl = (geomEl) => {
-            let totalLen = 0;
-            try { totalLen = geomEl.getTotalLength(); } catch (_) { return; }
-            if (!(totalLen > 0)) return;
-            const samplesCount = Math.max(8, Math.min(480, Math.ceil((totalLen / Math.max(vbW, vbH, 1)) * 420)));
-            const pts = [];
-            for (let s = 0; s <= samplesCount; s++) {
-              const pt = geomEl.getPointAtLength((s / samplesCount) * totalLen);
-              const tp = transformPt(pt);
-              pts.push(svgPtToWorld(tp.x, tp.y));
+          const fullCanvasArea = targetW * targetH;
+          const classifyAndPushLoop = (simp, isClosed, targetFillBucket) => {
+            if (simp.length < 2) return;
+            // Skip only full-canvas white background sheets (>= 75% of SVG area); keep white foreground text/icons!
+            if (nearWhiteUnstroked && isClosed && Math.abs(polySignedArea(simp)) >= fullCanvasArea * 0.75) {
+              return;
             }
-            if (pts.length < 2) return;
-            const isClosed = Math.hypot(pts[0].x - pts[pts.length - 1].x, pts[0].y - pts[pts.length - 1].y) < 1e-4;
-            const { corners } = smoothPolylineTaubin(pts, 0, { closed: isClosed, cornerCos: 0.72 });
-            const simp = piecewiseRdpSimplify(pts, corners, simpWorldEps, isClosed);
-            if (hasFill && !hasStroke && isClosed && simp.length >= 3) {
-              closedFillGroups.push(simp);
+            if (hasFill && !hasStroke && isClosed && simp.length >= 3 && solidStyle === 'fill' && !nearWhiteUnstroked) {
+              if (loopEnclosesAnyText(simp)) {
+                openPolylines.push({ pts: simp, closed: true });
+              } else {
+                targetFillBucket.push(simp);
+              }
             } else {
               openPolylines.push({ pts: simp, closed: isClosed });
             }
           };
 
-          if (el.tagName.toLowerCase() === 'path') {
-            const dStr = el.getAttribute('d') || '';
-            const subs = splitPathSubpaths(dStr);
-            if (subs.length <= 1) {
-              sampleGeometryEl(el);
+          const sampleSingleGeometryEl = (geomEl, forceClosed = false, targetFillBucket = null) => {
+            let totalLen = 0;
+            try { totalLen = geomEl.getTotalLength(); } catch (_) { return false; }
+            if (!(totalLen > 0)) return false;
+            const samplesCount = Math.max(8, Math.min(480, Math.ceil((totalLen / Math.max(vbW, vbH, 1)) * 420)));
+            const stepLen = totalLen / samplesCount;
+            const maxStepJumpSvg = Math.max(vbW, vbH) * 0.04 + stepLen * 3.0;
+
+            let curSvgPts = [];
+            let prevSvgPt = null;
+            const flushSegment = (closedHint) => {
+              if (curSvgPts.length < 2) { curSvgPts = []; return; }
+              const worldPts = curSvgPts.map((tp) => svgPtToWorld(tp.x, tp.y));
+              const isClosed = closedHint || Math.hypot(worldPts[0].x - worldPts[worldPts.length - 1].x, worldPts[0].y - worldPts[worldPts.length - 1].y) < 1e-4;
+              const { corners } = smoothPolylineTaubin(worldPts, 0, { closed: isClosed, cornerCos: 0.72 });
+              const simp = piecewiseRdpSimplify(worldPts, corners, simpWorldEps, isClosed);
+              classifyAndPushLoop(simp, isClosed, targetFillBucket || []);
+              curSvgPts = [];
+            };
+
+            for (let s = 0; s <= samplesCount; s++) {
+              const rawPt = geomEl.getPointAtLength((s / samplesCount) * totalLen);
+              if (prevSvgPt && Math.hypot(rawPt.x - prevSvgPt.x, rawPt.y - prevSvgPt.y) > maxStepJumpSvg) {
+                flushSegment(false);
+              }
+              prevSvgPt = rawPt;
+              curSvgPts.push(transformPt(rawPt));
+            }
+            flushSegment(forceClosed);
+            return true;
+          };
+
+          const tag = el.tagName.toLowerCase();
+          const shapeFillLoops = [];
+          if (tag === 'path') {
+            const dStr = (el.getAttribute('d') || '').trim();
+            if (!dStr) continue;
+            const moveCount = (dStr.match(/[Mm]/g) || []).length;
+            let nativeLen = 0;
+            try { nativeLen = el.getTotalLength(); } catch (_) { nativeLen = 0; }
+
+            if (moveCount <= 1) {
+              const closedHint = /z\s*$/i.test(dStr);
+              if (!sampleSingleGeometryEl(el, closedHint, shapeFillLoops)) skippedUnsupportedCount++;
             } else {
-              const fillSubLoops = [];
+              const subs = splitPathSubpaths(dStr);
+              let splitTotalLen = 0;
+              const tempEls = [];
               for (const sd of subs) {
                 const tmp = document.createElementNS(ns, 'path');
                 tmp.setAttribute('d', sd);
                 el.parentNode.appendChild(tmp);
-                let totalLen = 0;
-                try { totalLen = tmp.getTotalLength(); } catch (_) { totalLen = 0; }
-                if (totalLen > 0) {
-                  const sc = Math.max(6, Math.min(420, Math.ceil((totalLen / Math.max(vbW, vbH, 1)) * 420)));
-                  const pts = [];
-                  for (let s = 0; s <= sc; s++) {
-                    const tp = transformPt(tmp.getPointAtLength((s / sc) * totalLen));
-                    pts.push(svgPtToWorld(tp.x, tp.y));
-                  }
-                  const isClosed = /z\s*$/i.test(sd) || Math.hypot(pts[0].x - pts[pts.length - 1].x, pts[0].y - pts[pts.length - 1].y) < 1e-4;
-                  const { corners } = smoothPolylineTaubin(pts, 0, { closed: isClosed, cornerCos: 0.72 });
-                  const simp = piecewiseRdpSimplify(pts, corners, simpWorldEps, isClosed);
-                  if (hasFill && !hasStroke && isClosed && simp.length >= 3) {
-                    fillSubLoops.push(simp);
-                  } else if (simp.length >= 2) {
-                    openPolylines.push({ pts: simp, closed: isClosed });
-                  }
-                }
-                tmp.remove();
+                let tl = 0;
+                try { tl = tmp.getTotalLength(); } catch (_) { tl = 0; }
+                splitTotalLen += tl;
+                tempEls.push({ tmp, sd, tl });
               }
-              for (const fl of fillSubLoops) closedFillGroups.push(fl);
+
+              // If splitPathSubpaths preserved >= 94% of native path length, sample each subpath cleanly;
+              // otherwise fall back to native element sampling with jump detection so nothing is ever lost!
+              if (tempEls.length > 0 && (nativeLen <= 0 || Math.abs(splitTotalLen - nativeLen) <= nativeLen * 0.06)) {
+                for (const { tmp, sd, tl } of tempEls) {
+                  if (tl > 0) {
+                    sampleSingleGeometryEl(tmp, /z\s*$/i.test(sd), shapeFillLoops);
+                  }
+                  tmp.remove();
+                }
+              } else {
+                for (const { tmp } of tempEls) tmp.remove();
+                if (!sampleSingleGeometryEl(el, false, shapeFillLoops)) skippedUnsupportedCount++;
+              }
             }
           } else {
-            sampleGeometryEl(el);
+            const forceClosed = tag === 'rect' || tag === 'circle' || tag === 'ellipse' || tag === 'polygon';
+            if (!sampleSingleGeometryEl(el, forceClosed, shapeFillLoops)) skippedUnsupportedCount++;
           }
+
+          if (shapeFillLoops.length > 0) {
+            elementFillGroups.push(shapeFillLoops);
+          }
+        }
+
+        // 5. Vectorize extracted <text> / <foreignObject> labels into crisp letterform strokes
+        if (extractedTextItems.length > 0) {
+          updateTaskProgress(`Vectorizing ${extractedTextItems.length} text label(s)...`, 72);
+          await nextPaintFrame();
+          const { textPolylines, fallbackNativeTexts: fbTexts } = vectorizeSvgTextLabels(extractedTextItems, svgPtToWorld);
+          for (const tp of textPolylines) openPolylines.push(tp);
+          fallbackNativeTexts = fbTexts.map((ti) => ({
+            text: ti.text,
+            pos: svgPtToWorld(ti.svgX + ti.svgW * 0.5, ti.svgY + ti.svgH * 0.5),
+            size: Math.max(0.45, Math.min(2.5, ((ti.svgH / (vbH || 1)) * targetH) / 0.018))
+          }));
         }
       } finally {
         host.remove();
       }
 
-      if (openPolylines.length === 0 && closedFillGroups.length === 0) {
-        showToast(`No vector paths found inside ${fileName}`, 'warn');
+      // If this SVG was just a wrapper around an embedded base64 raster image with 0 vectors, load it into Auto-Draw!
+      if (openPolylines.length === 0 && elementFillGroups.length === 0 && fallbackNativeTexts.length === 0) {
+        if (embeddedRasterDataUrl) {
+          const img = new Image();
+          img.onload = () => {
+            state.refImage.img = img;
+            state.refImage.name = fileName;
+            state.refImage.visible = true;
+            $('chkRefVis').checked = true;
+            $('btnRefClear').disabled = false;
+            $('btnAutoTrace').disabled = false;
+            scheduleLiveTracePreview();
+            requestRender();
+            showToast(`SVG "${fileName}" contains an embedded raster bitmap — loaded into Auto-Draw Vectorizer!`);
+          };
+          img.src = embeddedRasterDataUrl;
+          return;
+        }
+        showToast(`No drawable vector paths or text found inside ${fileName}`, 'warn');
         return;
       }
 
@@ -7126,8 +7670,172 @@
       const strokeOutput = $('selTraceOutput')?.value || 'lines';
       const th = state.options.defaultThousandth;
       const mv = state.options.defaultMoveRadial ? false : state.options.defaultMove;
-      const batchIds = new Set();
 
+      // Convert any single-loop filled container that encloses other vector shapes into an outline
+      // so opaque single-color War Thunder quads never black out inner details (e.g. stick figure inside a filled circle)
+      const finalFillGroups = [];
+      for (let gi = 0; gi < elementFillGroups.length; gi++) {
+        const groupLoops = elementFillGroups[gi];
+        if (groupLoops.length === 1) {
+          const loop = groupLoops[0];
+          let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+          for (const p of loop) {
+            if (p.x < minX) minX = p.x;
+            if (p.x > maxX) maxX = p.x;
+            if (p.y < minY) minY = p.y;
+            if (p.y > maxY) maxY = p.y;
+          }
+          let enclosesOtherShape = false;
+          for (const op of openPolylines) {
+            const tp = op.pts[0];
+            if (tp && tp.x > minX && tp.x < maxX && tp.y > minY && tp.y < maxY && pointInPolygon(tp.x, tp.y, loop)) {
+              enclosesOtherShape = true;
+              break;
+            }
+          }
+          if (!enclosesOtherShape) {
+            for (let oj = 0; oj < elementFillGroups.length; oj++) {
+              if (oj === gi) continue;
+              const otp = elementFillGroups[oj][0]?.[0];
+              if (otp && otp.x > minX && otp.x < maxX && otp.y > minY && otp.y < maxY && pointInPolygon(otp.x, otp.y, loop)) {
+                enclosesOtherShape = true;
+                break;
+              }
+            }
+          }
+          if (enclosesOtherShape) {
+            openPolylines.push({ pts: loop, closed: true });
+            continue;
+          }
+        }
+        finalFillGroups.push(groupLoops);
+      }
+
+      // Build candidate lines & quads before committing so we can check complexity & advise the user if needed
+      let candidateQuads = [];
+      if (finalFillGroups.length > 0) {
+        updateTaskProgress(`Triangulating ${finalFillGroups.length} filled shape(s)...`, 82);
+        await nextPaintFrame();
+        for (const groupLoops of finalFillGroups) {
+          const nested = nestClosedContoursWithHoles(groupLoops);
+          for (const item of nested) {
+            const bridged = bridgeHolesIntoOuter(item.pts, item.holes);
+            const quads = triangulatePolygonToQuads(bridged);
+            for (const q of quads) candidateQuads.push({ tl: q[0], tr: q[1], br: q[2], bl: q[3] });
+          }
+        }
+      }
+
+      function buildStrokePrimitives(polylinesList) {
+        const linesOut = [];
+        const quadsOut = [];
+        for (const poly of polylinesList) {
+          if (strokeOutput === 'quadRibbon' || strokeOutput === 'variableInk') {
+            const halfW = (state.options.brushWidth || 0.004) * 0.5;
+            for (const q of buildMiterRibbonQuads(poly.pts, halfW, { closed: poly.closed })) {
+              quadsOut.push(q);
+            }
+          } else {
+            for (let k = 0; k < poly.pts.length - 1; k++) {
+              const a = poly.pts[k], b = poly.pts[k + 1];
+              if (Math.hypot(b.x - a.x, b.y - a.y) >= 1e-6) linesOut.push({ a, b });
+            }
+            if (poly.closed && poly.pts.length >= 3) {
+              const a = poly.pts[poly.pts.length - 1], b = poly.pts[0];
+              if (Math.hypot(b.x - a.x, b.y - a.y) >= 1e-6) linesOut.push({ a, b });
+            }
+          }
+        }
+        return { linesOut, quadsOut };
+      }
+
+      let { linesOut: candidateLines, quadsOut: strokeRibbonQuads } = buildStrokePrimitives(openPolylines);
+      const existingCount = state.doc.lines.length + state.doc.quads.length + state.doc.circles.length + state.doc.texts.length;
+      const totalNew = candidateLines.length + candidateQuads.length + strokeRibbonQuads.length + fallbackNativeTexts.length;
+      const exceedsLimit = existingCount + totalNew > WT_RECOMMENDED_LIMIT;
+      const hasSkipped = skippedRasterCount > 0 || skippedUnsupportedCount > 0;
+
+      if (exceedsLimit || hasSkipped) {
+        const bullets = [];
+        const budget = Math.max(200, WT_RECOMMENDED_LIMIT - existingCount);
+        if (exceedsLimit) {
+          bullets.push(
+            `Generated ${totalNew} primitives (total sight complexity: ${existingCount + totalNew} / ${WT_RECOMMENDED_LIMIT}). War Thunder may chop or fail to render sights above ${WT_RECOMMENDED_LIMIT} primitives in-game.`
+          );
+          bullets.push(
+            `Auto-Simplify to Fit: Adaptively simplifies curves so all shapes fit within ${WT_RECOMMENDED_LIMIT} primitives without dropping parts of the drawing.`
+          );
+          bullets.push(
+            `Chop to ${WT_RECOMMENDED_LIMIT} Limit: Imports the first ${budget} primitives at full detail and chops off the remaining ${Math.max(0, totalNew - budget)} primitives.`
+          );
+        }
+        if (skippedRasterCount > 0) {
+          bullets.push(
+            `${skippedRasterCount} embedded raster <image> element(s) inside this SVG cannot be imported directly as vector paths (use "Load Image" to trace raster bitmaps).`
+          );
+        }
+        if (skippedUnsupportedCount > 0) {
+          bullets.push(
+            `${skippedUnsupportedCount} empty or non-geometric SVG element(s) had no drawable vector length and were skipped.`
+          );
+        }
+
+        const alertText = exceedsLimit
+          ? `Importing "${fileName}" at full detail exceeds War Thunder's ${WT_RECOMMENDED_LIMIT}-primitive ceiling.`
+          : `Some elements in "${fileName}" cannot be imported 1:1 as SVG vectors.`;
+
+        const choice = await askImportAdvisory({
+          title: exceedsLimit ? 'Complex SVG Import Advisory' : 'Partial SVG Import Advisory',
+          subtitle: `${fileName} (${totalNew} vector primitives${extractedTextItems.length ? `, ${extractedTextItems.length} text label(s)` : ''})`,
+          alertText,
+          bullets,
+          canAutoFit: exceedsLimit,
+          canChop: exceedsLimit
+        });
+
+        if (choice === 'cancel') {
+          showToast(`Canceled importing ${fileName}`, 'warn');
+          return;
+        }
+        if (choice === 'autofit' && exceedsLimit) {
+          for (const mult of [2.2, 4.0, 7.5, 14.0, 25.0]) {
+            const eps = simpWorldEps * mult;
+            const resimpPolys = openPolylines.map((p) => {
+              const { corners } = smoothPolylineTaubin(p.pts, 0, { closed: p.closed, cornerCos: 0.65 });
+              return { pts: piecewiseRdpSimplify(p.pts, corners, eps, p.closed), closed: p.closed };
+            });
+            const rebuilt = buildStrokePrimitives(resimpPolys);
+            candidateLines = rebuilt.linesOut;
+            strokeRibbonQuads = rebuilt.quadsOut;
+            if (existingCount + candidateLines.length + candidateQuads.length + strokeRibbonQuads.length <= WT_RECOMMENDED_LIMIT) {
+              break;
+            }
+          }
+        } else if (choice === 'chop' && exceedsLimit) {
+          let rem = budget;
+          if (candidateQuads.length > rem) {
+            candidateQuads = candidateQuads.slice(0, rem);
+            strokeRibbonQuads = [];
+            candidateLines = [];
+          } else {
+            rem -= candidateQuads.length;
+            if (strokeRibbonQuads.length > rem) {
+              strokeRibbonQuads = strokeRibbonQuads.slice(0, rem);
+              candidateLines = [];
+            } else {
+              rem -= strokeRibbonQuads.length;
+              if (candidateLines.length > rem) {
+                candidateLines = candidateLines.slice(0, rem);
+              }
+            }
+          }
+        }
+      }
+
+      updateTaskProgress('Adding vector primitives to reticle...', 92);
+      await nextPaintFrame();
+
+      const batchIds = new Set();
       function pushWorldLine(a, b) {
         if (Math.hypot(b.x - a.x, b.y - a.y) < 1e-6) return;
         const id = BlkParser.nextId('line');
@@ -7164,32 +7872,24 @@
         });
       }
 
-      if (closedFillGroups.length > 0) {
-        updateTaskProgress(`Triangulating ${closedFillGroups.length} filled contour(s)...`, 80);
-        await nextPaintFrame();
-        const nested = nestClosedContoursWithHoles(closedFillGroups);
-        for (const item of nested) {
-          const bridged = bridgeHolesIntoOuter(item.pts, item.holes);
-          const quads = triangulatePolygonToQuads(bridged);
-          for (const q of quads) pushWorldQuad({ tl: q[0], tr: q[1], br: q[2], bl: q[3] });
-        }
-      }
-
-      updateTaskProgress('Adding vector primitives to reticle...', 92);
-      await nextPaintFrame();
-
-      for (const poly of openPolylines) {
-        if (strokeOutput === 'quadRibbon' || strokeOutput === 'variableInk') {
-          const halfW = (state.options.brushWidth || 0.004) * 0.5;
-          for (const q of buildMiterRibbonQuads(poly.pts, halfW, { closed: poly.closed })) {
-            pushWorldQuad(q);
-          }
-        } else {
-          for (let k = 0; k < poly.pts.length - 1; k++) pushWorldLine(poly.pts[k], poly.pts[k + 1]);
-          if (poly.closed && poly.pts.length >= 3) {
-            pushWorldLine(poly.pts[poly.pts.length - 1], poly.pts[0]);
-          }
-        }
+      for (const q of candidateQuads) pushWorldQuad(q);
+      for (const q of strokeRibbonQuads) pushWorldQuad(q);
+      for (const seg of candidateLines) pushWorldLine(seg.a, seg.b);
+      for (const nt of fallbackNativeTexts) {
+        const id = BlkParser.nextId('text');
+        batchIds.add(id);
+        state.doc.texts.push({
+          id,
+          layer: targetLayer,
+          text: nt.text,
+          x: fromCanvasUnit(nt.pos.x, th),
+          y: fromCanvasUnit(nt.pos.y, th),
+          align: 0,
+          size: Number(nt.size.toFixed(2)),
+          move: mv,
+          thousandth: th,
+          ...makeDefaultRadialFields(nt.pos.x, nt.pos.y)
+        });
       }
 
       updateTaskProgress('Done', 100);
@@ -7197,7 +7897,8 @@
       $('btnUndoTrace').disabled = batchIds.size === 0;
       pushHistory();
       requestRender();
-      showToast(`Imported SVG "${fileName}": ${batchIds.size} shapes into ${targetLayer === 'base' ? 'Base' : 'Drawn'} layer`);
+      const textNote = extractedTextItems.length > 0 ? ` (including ${extractedTextItems.length} text label(s))` : '';
+      showToast(`Imported SVG "${fileName}": ${batchIds.size} primitives${textNote} into ${targetLayer === 'base' ? 'Base' : 'Drawn'} layer`);
     } finally {
       hideTaskProgress();
     }
