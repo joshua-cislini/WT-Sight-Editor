@@ -9,10 +9,25 @@
   const MAX_HISTORY = 50;
   const WT_RECOMMENDED_LIMIT = 8000;
   const MOTION_COLORS = {
-    static: '#cbd5e1',
+    static: '#e5e5e5',
     vertical: '#38bdf8',
-    radial: '#e879f9'
+    radial: '#f59e0b'
   };
+  const LAYER_COLORS = {
+    base: '#38bdf8',
+    draw: '#34d399'
+  };
+
+  function syncThemeColorsFromCss() {
+    if (typeof window === 'undefined' || !window.getComputedStyle) return;
+    const cs = window.getComputedStyle(document.documentElement);
+    const getVar = (name, fallback) => (cs.getPropertyValue(name) || '').trim() || fallback;
+    MOTION_COLORS.static = getVar('--motion-static-color', '#e5e5e5');
+    MOTION_COLORS.vertical = getVar('--motion-vertical-color', '#38bdf8');
+    MOTION_COLORS.radial = getVar('--motion-radial-color', '#f59e0b');
+    LAYER_COLORS.base = getVar('--base-color', '#38bdf8');
+    LAYER_COLORS.draw = getVar('--draw-color', '#34d399');
+  }
 
   // =========================================================================
   // Application State
@@ -1458,6 +1473,24 @@
     if ($('cntMotionStatic')) $('cntMotionStatic').textContent = String(staticCnt);
     if ($('cntMotionVert')) $('cntMotionVert').textContent = String(vertCnt);
     if ($('cntMotionRadial')) $('cntMotionRadial').textContent = String(radialCnt);
+  }
+
+  function updateLayerLegend() {
+    const legend = $('layerLegend');
+    if (!legend) return;
+    const active = !isMotionColorActive() && !!state.options.colorLayers;
+    legend.hidden = !active;
+    if (!active) return;
+
+    let baseCnt = 0;
+    let drawCnt = 0;
+    for (const { item } of allShapes()) {
+      if (!isLayerVisible(item.layer)) continue;
+      if (item.layer === 'base') baseCnt++;
+      else drawCnt++;
+    }
+    if ($('cntLayerBase')) $('cntLayerBase').textContent = String(baseCnt);
+    if ($('cntLayerDraw')) $('cntLayerDraw').textContent = String(drawCnt);
   }
 
   function addLineSymmetric(x1, y1, x2, y2, layer = 'draw') {
@@ -3213,12 +3246,12 @@
     const colorByLayer = !colorByMotion && state.options.colorLayers;
     const groupColorStyle = (grp) => {
       if (colorByMotion) return MOTION_COLORS[grp] || theme.reticle;
-      if (colorByLayer) return grp === 'base' ? '#38bdf8' : '#34d399';
+      if (colorByLayer) return grp === 'base' ? LAYER_COLORS.base : LAYER_COLORS.draw;
       return theme.reticle;
     };
     const itemColorStyle = (item) => {
       if (colorByMotion) return MOTION_COLORS[getElementMotionType(item)];
-      if (colorByLayer) return item.layer === 'base' ? '#38bdf8' : '#34d399';
+      if (colorByLayer) return item.layer === 'base' ? LAYER_COLORS.base : LAYER_COLORS.draw;
       return theme.reticle;
     };
 
@@ -3703,7 +3736,9 @@
     const maskR = 0.6 * state.cam.scale;
 
     if (!(state.doc.hasSynthesizedStatic && isLayerVisible('base'))) {
-      const staticColor = isMotionColorActive() ? MOTION_COLORS.static : theme.crosshair;
+      const staticColor = isMotionColorActive()
+        ? MOTION_COLORS.static
+        : (state.options.colorLayers ? LAYER_COLORS.base : theme.crosshair);
       ctx.save();
       ctx.strokeStyle = staticColor;
       ctx.fillStyle = staticColor;
@@ -4351,7 +4386,9 @@
     const maskR = 0.6 * state.cam.scale;
 
     if (!(state.doc.hasSynthesizedStatic && isLayerVisible('base'))) {
-      const staticColor = isMotionColorActive() ? MOTION_COLORS.static : theme.crosshair;
+      const staticColor = isMotionColorActive()
+        ? MOTION_COLORS.static
+        : (state.options.colorLayers ? LAYER_COLORS.base : theme.crosshair);
       ctx.save();
       ctx.strokeStyle = staticColor;
       ctx.fillStyle = staticColor;
@@ -8285,26 +8322,63 @@
     };
   }
 
+  function docHasReticleThings(doc = state.doc) {
+    if (!doc) return false;
+    const primCount = (doc.lines?.length || 0) + (doc.quads?.length || 0) + (doc.circles?.length || 0) + (doc.texts?.length || 0);
+    const hasSynth = !!doc.hasSynthesizedStatic;
+    const hasBal = Array.isArray(doc.ballistics) && doc.ballistics.length > 0;
+    const hasRad = (Array.isArray(doc.radialLines) && doc.radialLines.length > 0) || !!doc.header?.radial;
+    return primCount > 0 || hasSynth || hasBal || hasRad;
+  }
+
   function docHasActiveHudSettings(doc = state.doc) {
     if (!doc) return false;
     const widgets = doc.hudWidgets || {};
-    const anyWidget = BlkParser.HUD_WIDGET_ORDER.some((k) => widgets[k]?.included);
+    const anyWidget = BlkParser.HUD_WIDGET_ORDER.some((k) => !!widgets[k]?.included);
     const hasRetOverride = !!doc.header?.reticle?.included;
-    return anyWidget || hasRetOverride;
+    const isExplicitHudDoc = doc.docType === 'hud_preset';
+    return anyWidget || hasRetOverride || isExplicitHudDoc;
+  }
+
+  function updatePrimarySaveButtonState() {
+    const btn = $('btnSaveBlk');
+    if (!btn) return;
+    const hasReticle = docHasReticleThings(state.doc);
+    const hasHud = docHasActiveHudSettings(state.doc);
+    const names = getExportFileNames(state.fileName);
+
+    if (hasReticle && hasHud) {
+      btn.title = `Save Both .blk (Ctrl+S) • Auto-saves ${names.reticleFile} (all_tanks) & ${names.presetFile} (tank_sight_presets)`;
+    } else if (hasReticle) {
+      btn.title = `Save Reticle .blk (Ctrl+S) • Saves ${names.reticleFile} (UserSights/all_tanks)`;
+    } else if (hasHud) {
+      btn.title = `Save HUD Preset .blk (Ctrl+S) • Saves ${names.presetFile} (UserSights/tank_sight_presets)`;
+    } else {
+      btn.title = 'Save .blk (Ctrl+S)';
+    }
   }
 
   async function saveBlkFile(forceMode = null) {
     const explicitMode = typeof forceMode === 'string' ? forceMode : null;
     const d = state.doc;
-    const totalPrimitives = d.lines.length + d.quads.length + d.circles.length + d.texts.length;
+    const hasReticle = docHasReticleThings(d);
     const hasHud = docHasActiveHudSettings(d);
 
-    let mode = explicitMode || d.docType || 'sight';
-    if (!explicitMode) {
-      // If the user has both reticle geometry and HUD preset settings active, export both separated files automatically
-      if (mode === 'hud_preset' && totalPrimitives > 0) mode = 'both';
-      else if (mode === 'sight' && hasHud && totalPrimitives > 0) mode = 'both';
+    let mode;
+    if (explicitMode) {
+      mode = explicitMode;
+    } else if (hasReticle && hasHud) {
+      mode = 'both';
+    } else if (hasReticle && !hasHud) {
+      mode = 'sight';
+    } else if (!hasReticle && hasHud) {
+      mode = 'hud_preset';
+    } else {
+      mode = 'sight';
     }
+
+    state.doc.docType = mode;
+    if ($('selDocType')) $('selDocType').value = mode;
 
     const names = getExportFileNames(state.fileName);
 
@@ -8313,7 +8387,7 @@
         forceFormat: 'sight',
         excludeBaseLayer: !state.options.exportBase
       });
-      const linkedCrosshair = totalPrimitives > 0 ? names.reticleStem : (d.header.crosshairPreset || names.reticleStem);
+      const linkedCrosshair = hasReticle ? names.reticleStem : (d.header.crosshairPreset || names.reticleStem);
       d.header.crosshairPreset = linkedCrosshair;
       if ($('inpCrosshairPreset')) $('inpCrosshairPreset').value = linkedCrosshair;
 
@@ -8326,13 +8400,12 @@
       rebuildPresetsDropdown(true);
 
       downloadTextFile(names.reticleFile, reticleContent);
-      setTimeout(() => {
-        downloadTextFile(names.presetFile, presetContent);
-      }, 140);
+      downloadTextFile(names.presetFile, presetContent);
 
       showToast(
-        `Exported ${names.reticleFile} (→ UserSights/all_tanks) & ${names.presetFile} (→ UserSights/tank_sight_presets)`
+        `Saved both: ${names.reticleFile} (→ all_tanks) & ${names.presetFile} (→ tank_sight_presets)`
       );
+      updatePrimarySaveButtonState();
       return;
     }
 
@@ -8361,6 +8434,7 @@
         }
         const folderHint = isPresetOnly ? 'UserSights/tank_sight_presets/' : 'UserSights/all_tanks/ or <tank-ID>/';
         showToast(`Saved ${handle.name} (Place in ${folderHint})`);
+        updatePrimarySaveButtonState();
         return;
       } catch (err) {
         if (err && err.name === 'AbortError') return;
@@ -8370,6 +8444,7 @@
     downloadTextFile(outName, content);
     const folderHint = isPresetOnly ? 'UserSights/tank_sight_presets/' : 'UserSights/all_tanks/ or <tank-ID>/';
     showToast(`Downloaded ${outName} (Place in ${folderHint})`);
+    updatePrimarySaveButtonState();
   }
 
   function downloadTextFile(filename, content) {
@@ -8381,7 +8456,7 @@
     document.body.appendChild(a);
     a.click();
     a.remove();
-    URL.revokeObjectURL(url);
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
   }
 
   function exportPngScreenshot() {
@@ -8491,15 +8566,22 @@
     const fill = $('limitMeterFill');
     fill.style.width = `${pct}%`;
     fill.classList.toggle('danger', totalPrimitives > WT_RECOMMENDED_LIMIT);
-    const hasBoth = docHasActiveHudSettings(d) && totalPrimitives > 0;
-    if (hasBoth && d.docType === 'hud_preset') {
+    const hasRet = docHasReticleThings(d);
+    const hasHud = docHasActiveHudSettings(d);
+    const hasBoth = hasRet && hasHud;
+    if (hasBoth && d.docType !== 'both') {
       d.docType = 'both';
       if ($('selDocType')) $('selDocType').value = 'both';
+    } else if (!hasBoth && d.docType === 'both') {
+      d.docType = hasRet ? 'sight' : (hasHud ? 'hud_preset' : 'sight');
+      if ($('selDocType')) $('selDocType').value = d.docType;
     }
     if ($('hudVectorExportHint')) {
       $('hudVectorExportHint').hidden = !hasBoth;
     }
     updateMotionLegend();
+    updateLayerLegend();
+    updatePrimarySaveButtonState();
   }
 
   function updateSelectionUI() {
@@ -8638,6 +8720,93 @@
     };
   }
 
+  function formatAlphaPct(a) {
+    return `${Math.round((Math.max(0, Math.min(255, Number(a) ?? 255)) / 255) * 100)}%`;
+  }
+
+  function syncAllColorIndicatorsUI() {
+    const h = state.doc.header;
+    const dayC = h.crosshairColor || { r: 0, g: 0, b: 0, a: 255 };
+    const lightC = h.crosshairLightColor || { r: 255, g: 64, b: 64, a: 255 };
+    const nvC = h.crosshairNvColor || { r: 110, g: 255, b: 145, a: 255 };
+    const thC = h.crosshairThermalColor || { r: 242, g: 248, b: 255, a: 255 };
+
+    const dayHex = rgbToHex(dayC.r, dayC.g, dayC.b);
+    const lightHex = rgbToHex(lightC.r, lightC.g, lightC.b);
+    const nvHex = rgbToHex(nvC.r, nvC.g, nvC.b);
+    const thHex = rgbToHex(thC.r, thC.g, thC.b);
+
+    // Panel 5: Sight Global Settings (CDK)
+    if ($('colCrosshair')) $('colCrosshair').value = dayHex;
+    if ($('rngCrosshairAlpha')) $('rngCrosshairAlpha').value = String(dayC.a ?? 255);
+    if ($('lblCrosshairAlpha')) $('lblCrosshairAlpha').textContent = formatAlphaPct(dayC.a);
+
+    if ($('colLight')) $('colLight').value = lightHex;
+    if ($('rngLightAlpha')) $('rngLightAlpha').value = String(lightC.a ?? 255);
+    if ($('lblLightAlpha')) $('lblLightAlpha').textContent = formatAlphaPct(lightC.a);
+
+    if ($('colNv')) $('colNv').value = nvHex;
+    if ($('rngNvAlpha')) $('rngNvAlpha').value = String(nvC.a ?? 255);
+    if ($('lblNvAlpha')) $('lblNvAlpha').textContent = formatAlphaPct(nvC.a);
+
+    if ($('colThermal')) $('colThermal').value = thHex;
+    if ($('rngThermalAlpha')) $('rngThermalAlpha').value = String(thC.a ?? 255);
+    if ($('lblThermalAlpha')) $('lblThermalAlpha').textContent = formatAlphaPct(thC.a);
+
+    // Panel 3: Tank Sight Preset (HUD) mirrored Reticle Optic Colors
+    if ($('colHudRetDay')) $('colHudRetDay').value = dayHex;
+    if ($('rngHudRetDayAlpha')) $('rngHudRetDayAlpha').value = String(dayC.a ?? 255);
+    if ($('lblHudRetDayAlpha')) $('lblHudRetDayAlpha').textContent = formatAlphaPct(dayC.a);
+
+    if ($('colHudRetLight')) $('colHudRetLight').value = lightHex;
+    if ($('rngHudRetLightAlpha')) $('rngHudRetLightAlpha').value = String(lightC.a ?? 255);
+    if ($('lblHudRetLightAlpha')) $('lblHudRetLightAlpha').textContent = formatAlphaPct(lightC.a);
+
+    if ($('colHudRetNv')) $('colHudRetNv').value = nvHex;
+    if ($('rngHudRetNvAlpha')) $('rngHudRetNvAlpha').value = String(nvC.a ?? 255);
+    if ($('lblHudRetNvAlpha')) $('lblHudRetNvAlpha').textContent = formatAlphaPct(nvC.a);
+
+    if ($('colHudRetThermal')) $('colHudRetThermal').value = thHex;
+    if ($('rngHudRetThermalAlpha')) $('rngHudRetThermalAlpha').value = String(thC.a ?? 255);
+    if ($('lblHudRetThermalAlpha')) $('lblHudRetThermalAlpha').textContent = formatAlphaPct(thC.a);
+
+    // Topbar Mode Switcher swatches (reflect configured Reticle optic colors)
+    const setSwatch = (id, c, fallbackCss) => {
+      const el = $(id);
+      if (!el) return;
+      el.style.backgroundColor = (c && c.a > 15) ? rgbToHex(c.r, c.g, c.b) : fallbackCss;
+    };
+    setSwatch('swatchModeDay', dayC, '#181818');
+    setSwatch('swatchModeLight', lightC, '#ff4040');
+    setSwatch('swatchModeNvg', nvC, '#6eff91');
+    setSwatch('swatchModeThermal', thC, '#f2f8ff');
+
+    // HUD Widget Mode Tab swatches (reflect active HUD widget's 4-mode colors)
+    const widgets = state.doc.hudWidgets;
+    const selName = state.hudEditor?.selectedWidget || 'rangefinder';
+    const w = widgets?.[selName];
+    if (w) {
+      for (const [m, swId, fb] of [
+        ['day', 'swatchHudModeDay', '#00ff3c'],
+        ['light', 'swatchHudModeLight', '#ff4040'],
+        ['nvg', 'swatchHudModeNvg', '#6eff91'],
+        ['thermal', 'swatchHudModeThermal', '#f2f8ff']
+      ]) {
+        const keys = getHudColorKeyMap(selName, m);
+        const fc = w[keys.fg];
+        setSwatch(swId, fc, fb);
+      }
+    }
+
+    // Active mode sync between Topbar previewMode and Color Motion checkbox
+    const motionActive = isMotionColorActive();
+    if ($('chkColorMotion')) $('chkColorMotion').checked = motionActive;
+    if ($('chkColorLayers')) $('chkColorLayers').checked = !motionActive && !!state.options.colorLayers;
+    document.querySelectorAll('.mode-btn').forEach((b) => {
+      b.classList.toggle('active', b.dataset.mode === state.previewMode);
+    });
+  }
+
   function syncHeaderUIFromDoc() {
     const h = state.doc.header;
     $('chkCentralVert').checked = !!h.drawCentralLineVert;
@@ -8649,22 +8818,13 @@
     if ($('selThousandthMode')) $('selThousandthMode').value = h.thousandthMode || 'ussr';
     $('numLineMult').value = h.lineSizeMult;
     $('numFontMult').value = h.fontSizeMult;
-    $('colCrosshair').value = rgbToHex(h.crosshairColor.r, h.crosshairColor.g, h.crosshairColor.b);
-    $('rngCrosshairAlpha').value = h.crosshairColor.a;
-    $('colLight').value = rgbToHex(h.crosshairLightColor.r, h.crosshairLightColor.g, h.crosshairLightColor.b);
-    $('rngLightAlpha').value = h.crosshairLightColor.a;
-    const nvC = h.crosshairNvColor || { r: 110, g: 255, b: 145, a: 255 };
-    const thC = h.crosshairThermalColor || { r: 242, g: 248, b: 255, a: 255 };
-    if ($('colNv')) $('colNv').value = rgbToHex(nvC.r, nvC.g, nvC.b);
-    if ($('rngNvAlpha')) $('rngNvAlpha').value = nvC.a;
-    if ($('colThermal')) $('colThermal').value = rgbToHex(thC.r, thC.g, thC.b);
-    if ($('rngThermalAlpha')) $('rngThermalAlpha').value = thC.a;
     if ($('numGlobalDistOffset')) $('numGlobalDistOffset').value = String(Math.round(h.shotDistScaleOffset || 0));
     const mc = h.matchExpClass || { exp_tank: true, exp_heavy_tank: true, exp_tank_destroyer: true, exp_SPAA: true };
     if ($('chkExpTank')) $('chkExpTank').checked = !!mc.exp_tank;
     if ($('chkExpHeavy')) $('chkExpHeavy').checked = !!mc.exp_heavy_tank;
     if ($('chkExpTD')) $('chkExpTD').checked = !!mc.exp_tank_destroyer;
     if ($('chkExpSPAA')) $('chkExpSPAA').checked = !!mc.exp_SPAA;
+    syncAllColorIndicatorsUI();
     if (typeof syncHudPresetUIFromDoc === 'function') syncHudPresetUIFromDoc();
   }
 
@@ -8816,22 +8976,28 @@
     $('btnUndo').addEventListener('click', undo);
     $('btnRedo').addEventListener('click', redo);
     $('btnExportPng').addEventListener('click', exportPngScreenshot);
-    $('btnSaveBlk').addEventListener('click', saveBlkFile);
+    $('btnSaveBlk').addEventListener('click', () => saveBlkFile());
 
     // Preview mode buttons
+    let lastNonMotionMode = 'day';
     document.querySelectorAll('.mode-btn').forEach((btn) => {
       btn.addEventListener('click', () => {
-        state.previewMode = btn.dataset.mode.trim();
-        if (state.previewMode === 'motion') {
+        const nextMode = btn.dataset.mode.trim();
+        state.previewMode = nextMode;
+        if (nextMode === 'motion') {
+          state.options.colorMotion = true;
           state.options.colorLayers = false;
-          if ($('chkColorLayers')) $('chkColorLayers').checked = false;
+        } else {
+          lastNonMotionMode = nextMode;
+          state.options.colorMotion = false;
         }
         if (['day', 'light', 'nvg', 'thermal'].includes(state.previewMode)) {
           state.hudEditor.colorMode = state.previewMode;
           if (typeof syncHudPresetUIFromDoc === 'function') syncHudPresetUIFromDoc();
         }
-        document.querySelectorAll('.mode-btn').forEach((b) => b.classList.toggle('active', b === btn));
+        syncAllColorIndicatorsUI();
         updateMotionLegend();
+        updateLayerLegend();
         requestRender();
       });
     });
@@ -8862,13 +9028,13 @@
       state.options.colorLayers = e.target.checked;
       if (e.target.checked) {
         state.options.colorMotion = false;
-        if ($('chkColorMotion')) $('chkColorMotion').checked = false;
         if (state.previewMode === 'motion') {
-          state.previewMode = 'blueprint';
-          document.querySelectorAll('.mode-btn').forEach((b) => b.classList.toggle('active', b.dataset.mode === 'blueprint'));
+          state.previewMode = lastNonMotionMode || 'blueprint';
         }
-        updateMotionLegend();
       }
+      syncAllColorIndicatorsUI();
+      updateMotionLegend();
+      updateLayerLegend();
       requestRender();
     });
     if ($('chkColorMotion')) {
@@ -8876,9 +9042,16 @@
         state.options.colorMotion = e.target.checked;
         if (e.target.checked) {
           state.options.colorLayers = false;
-          if ($('chkColorLayers')) $('chkColorLayers').checked = false;
+          if (state.previewMode !== 'motion') {
+            lastNonMotionMode = state.previewMode;
+            state.previewMode = 'motion';
+          }
+        } else if (state.previewMode === 'motion') {
+          state.previewMode = lastNonMotionMode || 'day';
         }
+        syncAllColorIndicatorsUI();
         updateMotionLegend();
+        updateLayerLegend();
         requestRender();
       });
     }
@@ -9135,6 +9308,7 @@
       state.layers.base.visible = !state.layers.base.visible;
       $('btnBaseVis').classList.toggle('active', state.layers.base.visible);
       updateMotionLegend();
+      updateLayerLegend();
       requestRender();
     });
     $('btnBaseLock').addEventListener('click', () => {
@@ -9153,6 +9327,7 @@
       state.layers.draw.visible = !state.layers.draw.visible;
       $('btnDrawVis').classList.toggle('active', state.layers.draw.visible);
       updateMotionLegend();
+      updateLayerLegend();
       requestRender();
     });
     $('btnDrawLock').addEventListener('click', () => {
@@ -9500,24 +9675,35 @@
       pushHistory();
       requestRender();
     });
-    const updateColor = (key, hexEl, alphaEl) => {
+    const updateColor = (key, hexEl, alphaEl, targetPreviewMode) => {
       const rgb = hexToRgb($(hexEl).value);
       const a = parseInt($(alphaEl).value, 10);
       state.doc.header[key] = { r: rgb.r, g: rgb.g, b: rgb.b, a: Number.isFinite(a) ? a : 255 };
       state.doc.modifiedHeaderKeys.add(key);
+      if (targetPreviewMode && state.previewMode !== targetPreviewMode && state.previewMode !== 'motion') {
+        state.previewMode = targetPreviewMode;
+        state.hudEditor.colorMode = targetPreviewMode;
+      }
+      syncAllColorIndicatorsUI();
+      updateMotionLegend();
+      updateLayerLegend();
       requestRender();
     };
-    const bindColorPair = (hexId, alphaId, key) => {
+    const bindColorPair = (hexId, alphaId, key, targetPreviewMode) => {
       if (!$(hexId) || !$(alphaId)) return;
-      $(hexId).addEventListener('input', () => updateColor(key, hexId, alphaId));
-      $(alphaId).addEventListener('input', () => updateColor(key, hexId, alphaId));
+      $(hexId).addEventListener('input', () => updateColor(key, hexId, alphaId, targetPreviewMode));
+      $(alphaId).addEventListener('input', () => updateColor(key, hexId, alphaId, targetPreviewMode));
       $(hexId).addEventListener('change', () => pushHistory());
       $(alphaId).addEventListener('change', () => pushHistory());
     };
-    bindColorPair('colCrosshair', 'rngCrosshairAlpha', 'crosshairColor');
-    bindColorPair('colLight', 'rngLightAlpha', 'crosshairLightColor');
-    bindColorPair('colNv', 'rngNvAlpha', 'crosshairNvColor');
-    bindColorPair('colThermal', 'rngThermalAlpha', 'crosshairThermalColor');
+    bindColorPair('colCrosshair', 'rngCrosshairAlpha', 'crosshairColor', 'day');
+    bindColorPair('colLight', 'rngLightAlpha', 'crosshairLightColor', 'light');
+    bindColorPair('colNv', 'rngNvAlpha', 'crosshairNvColor', 'nvg');
+    bindColorPair('colThermal', 'rngThermalAlpha', 'crosshairThermalColor', 'thermal');
+    bindColorPair('colHudRetDay', 'rngHudRetDayAlpha', 'crosshairColor', 'day');
+    bindColorPair('colHudRetLight', 'rngHudRetLightAlpha', 'crosshairLightColor', 'light');
+    bindColorPair('colHudRetNv', 'rngHudRetNvAlpha', 'crosshairNvColor', 'nvg');
+    bindColorPair('colHudRetThermal', 'rngHudRetThermalAlpha', 'crosshairThermalColor', 'thermal');
 
     if ($('numGlobalDistOffset')) {
       $('numGlobalDistOffset').addEventListener('change', (e) => {
@@ -10521,10 +10707,13 @@
     const h = doc.header;
     const widgets = ensureHudWidgetsOnDoc();
     const includedCount = BlkParser.HUD_WIDGET_ORDER.filter((k) => widgets[k]?.included).length;
-    const totalPrimitives = doc.lines.length + doc.quads.length + doc.circles.length + doc.texts.length;
-    const hasBoth = (includedCount > 0 || !!h.reticle?.included) && totalPrimitives > 0;
-    if (hasBoth && doc.docType === 'hud_preset') {
+    const hasRet = docHasReticleThings(doc);
+    const hasHud = docHasActiveHudSettings(doc);
+    const hasBoth = hasRet && hasHud;
+    if (hasBoth && doc.docType !== 'both') {
       doc.docType = 'both';
+    } else if (!hasBoth && doc.docType === 'both') {
+      doc.docType = hasRet ? 'sight' : (hasHud ? 'hud_preset' : 'sight');
     }
     const modeVal = doc.docType === 'both' ? 'both' : (doc.docType === 'hud_preset' ? 'hud_preset' : 'sight');
 
@@ -10606,8 +10795,10 @@
       const pbg = w.progressBackgroundColor || { r: 0, g: 0, b: 0, a: 0 };
       if ($('colHudRfProg')) $('colHudRfProg').value = rgbToHex(pc.r, pc.g, pc.b);
       if ($('rngHudRfProgAlpha')) $('rngHudRfProgAlpha').value = String(pc.a ?? 255);
+      if ($('lblHudRfProgAlpha')) $('lblHudRfProgAlpha').textContent = formatAlphaPct(pc.a ?? 255);
       if ($('colHudRfProgBg')) $('colHudRfProgBg').value = rgbToHex(pbg.r, pbg.g, pbg.b);
       if ($('rngHudRfProgBgAlpha')) $('rngHudRfProgBgAlpha').value = String(pbg.a ?? 0);
+      if ($('lblHudRfProgBgAlpha')) $('lblHudRfProgBgAlpha').textContent = formatAlphaPct(pbg.a ?? 0);
     }
 
     const keys = getHudColorKeyMap(selName, colorMode);
@@ -10615,13 +10806,17 @@
     if ($('lblHudFgColor')) $('lblHudFgColor').textContent = keys.bg ? 'Text Color' : 'Color';
     if ($('colHudFg')) $('colHudFg').value = rgbToHex(fg.r, fg.g, fg.b);
     if ($('rngHudFgAlpha')) $('rngHudFgAlpha').value = String(fg.a ?? 255);
+    if ($('lblHudFgAlpha')) $('lblHudFgAlpha').textContent = formatAlphaPct(fg.a ?? 255);
 
     if ($('hudWidgetBgRow')) $('hudWidgetBgRow').hidden = !keys.bg;
     if (keys.bg) {
       const bg = w[keys.bg] || { r: 0, g: 0, b: 0, a: 0 };
       if ($('colHudBg')) $('colHudBg').value = rgbToHex(bg.r, bg.g, bg.b);
       if ($('rngHudBgAlpha')) $('rngHudBgAlpha').value = String(bg.a ?? 0);
+      if ($('lblHudBgAlpha')) $('lblHudBgAlpha').textContent = formatAlphaPct(bg.a ?? 0);
     }
+    syncAllColorIndicatorsUI();
+    updatePrimarySaveButtonState();
   }
 
   function initHudPresetControls() {
@@ -10889,6 +11084,7 @@
         const rgb = hexToRgb($(hexId).value);
         const a = parseInt($(alphaId).value, 10);
         curW()[propKey] = { r: rgb.r, g: rgb.g, b: rgb.b, a: Number.isFinite(a) ? a : 255 };
+        syncHudPresetUIFromDoc();
         requestRender();
       };
       $(hexId).addEventListener('input', apply);
@@ -10911,6 +11107,10 @@
       const rgb = hexToRgb(hexEl.value);
       const a = parseInt(alphaEl.value, 10);
       w[targetKey] = { r: rgb.r, g: rgb.g, b: rgb.b, a: Number.isFinite(a) ? a : 255 };
+      if (['day', 'light', 'nvg', 'thermal'].includes(state.hudEditor.colorMode) && state.previewMode !== state.hudEditor.colorMode && state.previewMode !== 'motion') {
+        state.previewMode = state.hudEditor.colorMode;
+      }
+      syncHudPresetUIFromDoc();
       if (push) pushHistory();
       requestRender();
     };
@@ -11224,6 +11424,7 @@
   // =========================================================================
   // Boot
   // =========================================================================
+  syncThemeColorsFromCss();
   initUI();
   initRadialAndPreviewControls();
   initHudPresetControls();

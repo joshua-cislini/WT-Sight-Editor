@@ -1,12 +1,23 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-type="software">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="page-type" content="software" />
+  <meta name="site-kind" content="software" />
+  <meta name="theme-color" content="#000000" />
+  <meta name="description" content="WT Reticle Studio Pro is a visual War Thunder .blk custom sight, circular rangefinder, HUD preset, and vector art studio." />
+  <meta property="og:title" content="WT Reticle Studio Pro" />
+  <meta property="og:description" content="Design, trace, and export War Thunder custom reticles and 1920x1080 HUD presets." />
+  <meta property="og:type" content="website" />
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
-  <title>WT Reticle Studio Pro - War Thunder .blk Custom Sight &amp; Art Editor</title>
+  <title>WT Reticle Studio Pro: War Thunder .blk Custom Sight &amp; Art Editor</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2334d399' stroke-width='2'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cline x1='12' y1='2' x2='12' y2='7'/%3E%3Cline x1='12' y1='17' x2='12' y2='22'/%3E%3Cline x1='2' y1='12' x2='7' y2='12'/%3E%3Cline x1='17' y1='12' x2='22' y2='12'/%3E%3Ccircle cx='12' cy='12' r='1.5' fill='%2334d399'/%3E%3C/svg%3E" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600&family=Geist:wght@400;500;600&display=swap" rel="stylesheet" />
   <script>
     (function () {
       var isWeb = window.location.protocol === 'http:' || window.location.protocol === 'https:';
@@ -33,12 +44,13 @@
   <noscript><link rel="stylesheet" href="styles.css" /></noscript>
 </head>
 <body>
-  <div class="app-shell">
+  <a href="#canvasStage" class="skip-link">Skip to canvas stage</a>
+  <div class="app-shell" data-enter>
     <!-- Top Header Bar -->
-    <header class="topbar">
+    <header class="topbar" role="banner">
       <div class="topbar-group brand-group">
         <div class="brand-logo" title="WT Reticle Studio Pro">
-          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="9" />
             <line x1="12" y1="2" x2="12" y2="7" />
             <line x1="12" y1="17" x2="12" y2="22" />
@@ -48,16 +60,26 @@
           </svg>
         </div>
         <div class="brand-text">
-          <span class="brand-title">WT Reticle Studio <span class="pro-tag">PRO</span></span>
-          <span class="file-badge" id="activeFileName">3.blk</span>
+          <span class="brand-title title-4">WT Reticle Studio <span class="pro-tag">PRO</span></span>
+          <span class="file-badge caption-4" id="activeFileName">3.blk</span>
         </div>
       </div>
 
-      <div class="topbar-group file-group">
+      <nav class="topbar-group file-group" aria-label="File and Sight Controls">
         <label class="inline-label" for="presetSelect">sights/</label>
         <select id="presetSelect" class="select-ctrl" title="Auto-discovered sights from sights/ folder"></select>
-        <button id="btnRefreshSights" class="btn btn-icon" title="Rescan sights/ folder for added .blk files">↻</button>
-        <button id="btnLinkSightsFolder" class="btn btn-ghost btn-sm" title="Link your sights/ folder for direct browser live-scanning &amp; saving">📁 Link sights/</button>
+        <button id="btnRefreshSights" class="btn btn-icon" title="Rescan sights/ folder for added .blk files" aria-label="Rescan sights folder">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+            <polyline points="21 3 21 9 15 9" />
+          </svg>
+        </button>
+        <button id="btnLinkSightsFolder" class="btn btn-ghost btn-sm" title="Link your sights/ folder for direct browser live scanning and saving">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+          </svg>
+          <span class="btn-label-collapsible">Link sights/</span>
+        </button>
         <input type="file" id="dirInputSights" webkitdirectory directory multiple hidden />
         <button id="btnNewBlank" class="btn btn-ghost btn-sm" title="Create a blank custom sight">Blank</button>
         <div class="v-sep"></div>
@@ -67,36 +89,36 @@
         <input type="file" id="fileOpenBlk" accept=".blk,.txt" hidden />
         <input type="file" id="fileImportOverlay" accept=".blk,.txt" hidden />
         <input type="file" id="fileRefImg" accept="image/*" hidden />
-      </div>
+      </nav>
 
       <div class="topbar-group action-group">
-        <button id="btnUndo" class="btn btn-icon" title="Undo (Ctrl+Z)" disabled>
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+        <button id="btnUndo" class="btn btn-icon" title="Undo (Ctrl+Z)" aria-label="Undo" disabled>
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M9 14L4 9l5-5" />
             <path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" />
           </svg>
         </button>
-        <button id="btnRedo" class="btn btn-icon" title="Redo (Ctrl+Y / Ctrl+Shift+Z)" disabled>
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+        <button id="btnRedo" class="btn btn-icon" title="Redo (Ctrl+Y / Ctrl+Shift+Z)" aria-label="Redo" disabled>
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M15 14l5-5-5-5" />
             <path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13" />
           </svg>
         </button>
         <div class="v-sep"></div>
         <div class="mode-switcher" role="group" aria-label="Sight Preview Mode">
-          <button class="mode-btn active" data-mode="day" title="Daytime Optic Field Preview">Day</button>
-          <button class="mode-btn" data-mode="light" title="Illuminated Reticle Preview">Illum</button>
-          <button class="mode-btn" data-mode="thermal" title="White-Hot Thermal Preview">Thermal</button>
-          <button class="mode-btn" data-mode="nvg" title="Green Phosphor NVG Preview">NVG</button>
+          <button class="mode-btn active" data-mode="day" title="Daytime Optic Field Preview"><span class="mode-swatch" id="swatchModeDay"></span>Day</button>
+          <button class="mode-btn" data-mode="light" title="Illuminated Reticle Preview"><span class="mode-swatch" id="swatchModeLight"></span>Illum</button>
+          <button class="mode-btn" data-mode="thermal" title="White-Hot Thermal Preview"><span class="mode-swatch" id="swatchModeThermal"></span>Thermal</button>
+          <button class="mode-btn" data-mode="nvg" title="Green Phosphor NVG Preview"><span class="mode-swatch" id="swatchModeNvg"></span>NVG</button>
           <button class="mode-btn" data-mode="blueprint" title="High-Contrast Dark CAD Blueprint View">CAD</button>
           <button class="mode-btn" data-mode="motion" title="Color-code elements by motion: Static vs Vertical (move:b) vs Radial (moveRadial)">Motion</button>
         </div>
         <div class="v-sep"></div>
-        <button id="btnRangePreview" class="btn btn-secondary btn-sm" title="Simulate War Thunder Rangefinder &amp; Circular Distance Control (0–4000m)">◎ Range Preview</button>
+        <button id="btnRangePreview" class="btn btn-secondary btn-sm" title="Simulate War Thunder Rangefinder &amp; Circular Distance Control (0 to 4000m)">Range Preview</button>
         <div class="v-sep"></div>
         <button id="btnExportPng" class="btn btn-ghost btn-sm" title="Export a high-resolution PNG screenshot of the reticle">PNG</button>
         <button id="btnViewCode" class="btn btn-secondary btn-sm" title="Inspect or edit raw .blk source">Raw .blk</button>
-        <button id="btnOpenGuide" class="btn btn-ghost btn-sm" title="Quick Usage &amp; War Thunder Sight Installation Guide">? Guide</button>
+        <button id="btnOpenGuide" class="btn btn-ghost btn-sm" title="Quick Usage &amp; War Thunder Sight Installation Guide">Guide</button>
         <button id="btnSaveBlk" class="btn btn-primary btn-sm" title="Save or Download .blk file (Ctrl+S)">Save .blk</button>
       </div>
     </header>
@@ -251,6 +273,15 @@
           </span>
         </div>
 
+        <div class="motion-legend" id="layerLegend" hidden>
+          <span class="motion-legend-item" title="Base / Uploaded .blk Layer">
+            <span class="layer-dot base-dot"></span>Base <span class="mono" id="cntLayerBase">0</span>
+          </span>
+          <span class="motion-legend-item" title="Drawn Art Overlay Layer">
+            <span class="layer-dot draw-dot"></span>Drawn <span class="mono" id="cntLayerDraw">0</span>
+          </span>
+        </div>
+
         <div class="drop-overlay" id="dropOverlay" hidden>
           <div class="drop-box">
             <strong>Drop .blk Sight or Reference Image</strong>
@@ -324,7 +355,7 @@
       </main>
 
       <!-- Right Inspector & Studio Sidebar -->
-      <aside class="inspector">
+      <aside class="inspector" aria-label="Sight Inspector and Studio Controls">
         <!-- 1. Drawing, Symmetry & Active Tool Options -->
         <details class="panel" open>
           <summary class="panel-header">Drawing &amp; Tool Options</summary>
@@ -353,10 +384,19 @@
               <label class="toggle-chip" title="Color-code Base Layer (Blue) vs Drawn Art (Green) for easy editing">
                 <input type="checkbox" id="chkColorLayers" />
                 <span>Color Layers</span>
+                <span class="chip-color-dots" aria-hidden="true">
+                  <span class="chip-dot base-dot"></span>
+                  <span class="chip-dot draw-dot"></span>
+                </span>
               </label>
-              <label class="toggle-chip" title="Color-code shapes by motion type: Static (White), Vertical move:b (Cyan), Radial moveRadial (Magenta)">
+              <label class="toggle-chip" title="Color-code shapes by motion type: Static (White), Vertical move:b (Cyan), Radial moveRadial (Amber)">
                 <input type="checkbox" id="chkColorMotion" />
                 <span>Color Motion</span>
+                <span class="chip-color-dots" aria-hidden="true">
+                  <span class="chip-dot static-dot"></span>
+                  <span class="chip-dot vertical-dot"></span>
+                  <span class="chip-dot radial-dot"></span>
+                </span>
               </label>
             </div>
 
@@ -403,7 +443,7 @@
                 <span class="val-pill mono" id="lblSimplify">0.0012</span>
               </div>
               <div class="field-row" data-opt="freehand">
-                <label for="rngBrushStabilizer" title="Smooths hand jitter using lazy-mouse stroke stabilization">Stabilizer</label>
+                <label for="rngBrushStabilizer" title="Smooths hand jitter using lazy mouse stroke stabilization">Stabilizer</label>
                 <input type="range" id="rngBrushStabilizer" min="0" max="90" step="5" value="35" />
                 <span class="val-pill mono" id="lblBrushStabilizer">35%</span>
               </div>
@@ -768,31 +808,63 @@
                   <label for="colHudRfProg">Prog Fill</label>
                   <input type="color" id="colHudRfProg" value="#ffff00" />
                   <input type="range" id="rngHudRfProgAlpha" min="0" max="255" value="255" title="Progress fill alpha (0-255)" />
+                  <span class="val-pill mono" id="lblHudRfProgAlpha">100%</span>
                 </div>
                 <div class="field-row">
                   <label for="colHudRfProgBg">Prog BG</label>
                   <input type="color" id="colHudRfProgBg" value="#000000" />
                   <input type="range" id="rngHudRfProgBgAlpha" min="0" max="255" value="0" title="Progress background alpha (0-255)" />
+                  <span class="val-pill mono" id="lblHudRfProgBgAlpha">0%</span>
+                </div>
+              </div>
+
+              <div class="sub-box">
+                <div class="sub-title">Reticle Optic Colors (Day / Illum / NVG / Thermal)</div>
+                <div class="field-row">
+                  <label for="colHudRetDay">Day Color</label>
+                  <input type="color" id="colHudRetDay" value="#000000" />
+                  <input type="range" id="rngHudRetDayAlpha" min="0" max="255" value="255" title="Reticle Day Alpha (0-255)" />
+                  <span class="val-pill mono" id="lblHudRetDayAlpha">100%</span>
+                </div>
+                <div class="field-row">
+                  <label for="colHudRetLight">Illum Color</label>
+                  <input type="color" id="colHudRetLight" value="#ff4040" />
+                  <input type="range" id="rngHudRetLightAlpha" min="0" max="255" value="255" title="Reticle Illuminated Alpha (0-255)" />
+                  <span class="val-pill mono" id="lblHudRetLightAlpha">100%</span>
+                </div>
+                <div class="field-row">
+                  <label for="colHudRetNv">NVG Color</label>
+                  <input type="color" id="colHudRetNv" value="#6eff91" />
+                  <input type="range" id="rngHudRetNvAlpha" min="0" max="255" value="255" title="Reticle Night Vision Alpha (0-255)" />
+                  <span class="val-pill mono" id="lblHudRetNvAlpha">100%</span>
+                </div>
+                <div class="field-row">
+                  <label for="colHudRetThermal">Thermal Color</label>
+                  <input type="color" id="colHudRetThermal" value="#f2f8ff" />
+                  <input type="range" id="rngHudRetThermalAlpha" min="0" max="255" value="255" title="Reticle Thermal Alpha (0-255)" />
+                  <span class="val-pill mono" id="lblHudRetThermalAlpha">100%</span>
                 </div>
               </div>
 
               <div class="hud-mode-tabs" role="tablist" aria-label="Widget Color Mode">
-                <button type="button" class="hud-mode-tab active" data-hud-color-mode="day">Day</button>
-                <button type="button" class="hud-mode-tab" data-hud-color-mode="light">Illum</button>
-                <button type="button" class="hud-mode-tab" data-hud-color-mode="nvg">NVG</button>
-                <button type="button" class="hud-mode-tab" data-hud-color-mode="thermal">Thermal</button>
+                <button type="button" class="hud-mode-tab active" data-hud-color-mode="day"><span class="mode-swatch" id="swatchHudModeDay"></span>Day</button>
+                <button type="button" class="hud-mode-tab" data-hud-color-mode="light"><span class="mode-swatch" id="swatchHudModeLight"></span>Illum</button>
+                <button type="button" class="hud-mode-tab" data-hud-color-mode="nvg"><span class="mode-swatch" id="swatchHudModeNvg"></span>NVG</button>
+                <button type="button" class="hud-mode-tab" data-hud-color-mode="thermal"><span class="mode-swatch" id="swatchHudModeThermal"></span>Thermal</button>
               </div>
 
               <div class="field-row">
                 <label for="colHudFg" id="lblHudFgColor">Text Color</label>
                 <input type="color" id="colHudFg" value="#00ff3c" />
                 <input type="range" id="rngHudFgAlpha" min="0" max="255" value="255" title="Foreground alpha (0-255)" />
+                <span class="val-pill mono" id="lblHudFgAlpha">100%</span>
               </div>
 
               <div class="field-row" id="hudWidgetBgRow">
                 <label for="colHudBg">BG Color</label>
                 <input type="color" id="colHudBg" value="#000000" />
                 <input type="range" id="rngHudBgAlpha" min="0" max="255" value="0" title="Background alpha (0-255)" />
+                <span class="val-pill mono" id="lblHudBgAlpha">0%</span>
               </div>
 
               <div class="btn-row">
@@ -804,7 +876,7 @@
           </div>
         </details>
 
-        <!-- 3. Reference Image & Ultra-Sensitive Pro Auto-Tracer -->
+        <!-- 3. Reference Image & Pro Auto-Draw -->
         <details class="panel" open>
           <summary class="panel-header">Ref Image &amp; Pro Auto-Draw</summary>
           <div class="panel-body">
@@ -1242,21 +1314,25 @@
               <label for="colCrosshair">Day Color</label>
               <input type="color" id="colCrosshair" value="#000000" />
               <input type="range" id="rngCrosshairAlpha" min="0" max="255" value="255" title="Alpha (0-255)" />
+              <span class="val-pill mono" id="lblCrosshairAlpha">100%</span>
             </div>
             <div class="field-row">
-              <label for="colLight">Light Color</label>
+              <label for="colLight">Illum Color</label>
               <input type="color" id="colLight" value="#ff4040" />
               <input type="range" id="rngLightAlpha" min="0" max="255" value="255" title="Alpha (0-255)" />
+              <span class="val-pill mono" id="lblLightAlpha">100%</span>
             </div>
             <div class="field-row">
               <label for="colNv">NVG Color</label>
               <input type="color" id="colNv" value="#6eff91" />
               <input type="range" id="rngNvAlpha" min="0" max="255" value="255" title="Night Vision Alpha (0-255)" />
+              <span class="val-pill mono" id="lblNvAlpha">100%</span>
             </div>
             <div class="field-row">
               <label for="colThermal">Thermal Color</label>
               <input type="color" id="colThermal" value="#f2f8ff" />
               <input type="range" id="rngThermalAlpha" min="0" max="255" value="255" title="Thermal Alpha (0-255)" />
+              <span class="val-pill mono" id="lblThermalAlpha">100%</span>
             </div>
             <div class="field-row">
               <label for="numGlobalDistOffset" title="shotDistScaleOffset:i: Distance scale horizontal offset">Dist Offset</label>
@@ -1297,23 +1373,23 @@
   </div>
 
   <!-- Raw .blk Source Modal -->
-  <div class="modal-backdrop" id="codeModal" hidden>
+  <div class="modal-backdrop" id="codeModal" role="dialog" aria-modal="true" aria-labelledby="codeModalTitle" hidden>
     <div class="modal-dialog">
       <div class="modal-header">
         <div class="modal-title">
-          <strong>Raw War Thunder .blk Source</strong>
+          <strong id="codeModalTitle" class="title-3">Raw War Thunder .blk Source</strong>
           <span class="mono muted-note" id="codeStats"></span>
         </div>
-        <div style="display: flex; align-items: center; gap: 8px;">
+        <div class="topbar-group">
           <select id="selRawModalTarget" title="Inspect either the Reticle file or the HUD Preset file">
             <option value="sight">Reticle (_reticle.blk → all_tanks / &lt;tank&gt;)</option>
             <option value="hud_preset">HUD Preset (_preset.blk → tank_sight_presets)</option>
           </select>
-          <button id="btnCloseModal" class="btn btn-icon" title="Close">✕</button>
+          <button id="btnCloseModal" class="btn btn-icon" title="Close" aria-label="Close modal">✕</button>
         </div>
       </div>
       <div class="modal-body">
-        <textarea id="rawBlkTextarea" spellcheck="false"></textarea>
+        <textarea id="rawBlkTextarea" spellcheck="false" aria-label="Raw War Thunder .blk Source Code"></textarea>
       </div>
       <div class="modal-footer">
         <button id="btnCopyBlk" class="btn btn-secondary">Copy to Clipboard</button>
@@ -1325,45 +1401,45 @@
   </div>
 
   <!-- Quick Usage & War Thunder Sight Guide Modal -->
-  <div class="modal-backdrop" id="guideModal" hidden>
+  <div class="modal-backdrop" id="guideModal" role="dialog" aria-modal="true" aria-labelledby="guideModalTitle" hidden>
     <div class="modal-dialog" style="max-width: 780px;">
       <div class="modal-header">
         <div class="modal-title">
-          <strong>WT Reticle Studio Pro: Quick Guide &amp; War Thunder Setup</strong>
+          <strong id="guideModalTitle" class="title-3">WT Reticle Studio Pro: Quick Guide &amp; War Thunder Setup</strong>
           <span class="mono muted-note">Read README.md for full documentation</span>
         </div>
-        <button id="btnCloseGuide" class="btn btn-icon" title="Close">✕</button>
+        <button id="btnCloseGuide" class="btn btn-icon" title="Close" aria-label="Close guide">✕</button>
       </div>
-      <div class="modal-body" style="padding: 16px 20px; overflow-y: auto; line-height: 1.55; font-size: 13px; color: var(--text-main);">
-        <h4 style="margin: 0 0 6px; color: var(--accent);">1. Example Sights &amp; Auto-Discovery in <code>sights/</code></h4>
-        <p style="margin: 0 0 12px; color: var(--text-muted);">
-          The <code>sights/</code> folder includes ready-to-use example sights and acts as a live library. Drop any <code>.blk</code> file into <code>sights/</code> and run <code>Start-ReticleStudio.bat</code> (or click <strong>📁 Link sights/</strong> in the top bar) to auto-discover every sight in the dropdown.
+      <div class="modal-body" style="overflow-y: auto;">
+        <h4>1. Example Sights &amp; Auto Discovery in <code>sights/</code></h4>
+        <p>
+          The <code>sights/</code> folder includes ready to use example sights and acts as a live library. Drop any <code>.blk</code> file into <code>sights/</code> and run <code>Start-ReticleStudio.bat</code> (or click <strong>Link sights/</strong> in the top bar) to discover every sight in the dropdown.
         </p>
-        <h4 style="margin: 0 0 6px; color: var(--accent);">2. Drawing Over Existing Sights</h4>
-        <p style="margin: 0 0 12px; color: var(--text-muted);">
-          Select any sight from <code>sights/</code> or click <strong>Overlay .blk</strong>. Classic preset files synthesize their static crosshair &amp; range scale into the <strong>Base Layer</strong>. Lock the Base Layer (<strong>🔒</strong>) and draw your custom artwork on the <strong>Drawn Art Overlay</strong> layer!
+        <h4>2. Drawing Over Existing Sights</h4>
+        <p>
+          Select any sight from <code>sights/</code> or click <strong>Overlay .blk</strong>. Classic preset files synthesize their static crosshair and range scale into the <strong>Base Layer</strong>. Lock the Base Layer and draw your custom artwork on the <strong>Drawn Art Overlay</strong> layer.
         </p>
-        <h4 style="margin: 0 0 6px; color: var(--accent);">3. Reticles vs. Tank Sight HUD Presets (Two-File Architecture)</h4>
-        <p style="margin: 0 0 12px; color: var(--text-muted);">
+        <h4>3. Reticles vs. Tank Sight HUD Presets (Two File Architecture)</h4>
+        <p>
           War Thunder separates custom sights into <strong>two distinct <code>.blk</code> files in two separate folders</strong> (HUD settings placed inside <code>all_tanks</code> or <code>&lt;tank-ID&gt;</code> sight files are ignored by the game):<br/>
           • <strong><code>&lt;filename&gt;_reticle.blk</code></strong>: Contains only the drawn reticle geometry (<code>drawLines</code>, <code>drawQuads</code>, <code>drawCircles</code>, <code>drawTexts</code>, <code>crosshair_distances</code>, <code>matchExpClass</code>) and goes into <code>UserSights\all_tanks\</code> or <code>UserSights\&lt;tank-ID&gt;\</code>.<br/>
-          • <strong><code>&lt;filename&gt;_preset.blk</code></strong>: Contains the 1920x1080 HUD widgets (<code>rangefinder</code>, <code>turret</code>, <code>fov</code>, <code>gunReady</code>, <code>bulletType</code>), 4-mode optic colors (Day/Illum/NVG/Thermal), <code>reticle</code> thickness/font overrides, and <code>crosshair:t="&lt;filename&gt;_reticle"</code> (linking it automatically to your reticle file), and goes into <code>UserSights\tank_sight_presets\</code>.<br/>
-          Click <strong>Save Both (_reticle + _preset)</strong> in <strong>Tank Sight Preset (HUD)</strong> (or set <strong>Export Mode</strong> to <strong>Both Files</strong> and click <strong>Save .blk</strong>) to export both linked files at once!
+          • <strong><code>&lt;filename&gt;_preset.blk</code></strong>: Contains the 1920x1080 HUD widgets (<code>rangefinder</code>, <code>turret</code>, <code>fov</code>, <code>gunReady</code>, <code>bulletType</code>), 4 mode optic colors (Day, Illum, NVG, Thermal), <code>reticle</code> thickness and font overrides, and <code>crosshair:t="&lt;filename&gt;_reticle"</code> (linking it automatically to your reticle file), and goes into <code>UserSights\tank_sight_presets\</code>.<br/>
+          Clicking the primary <strong>Save .blk</strong> button in the top right corner (or pressing <code>Ctrl + S</code>) automatically exports both companion files whenever both reticle geometry and HUD preset settings are present. If only reticle shapes exist, it automatically exports only <code>_reticle.blk</code>; if only HUD widgets exist, it exports only <code>_preset.blk</code>. Dedicated export buttons also remain available in <strong>Tank Sight Preset (HUD)</strong>.
         </p>
-        <h4 style="margin: 0 0 6px; color: var(--accent);">4. Auto-Drawing Images &amp; Importing .svg Art</h4>
-        <p style="margin: 0 0 12px; color: var(--text-muted);">
-          Click <strong>Ref Image</strong> (or drag &amp; drop a PNG/JPG/WebP onto the canvas), or click <strong>Import .svg</strong> to convert crisp SVG vector paths and <code>&lt;text&gt;</code>/<code>&lt;foreignObject&gt;</code> labels directly without rasterizing. In <strong>Ref Image &amp; Pro Auto-Draw</strong>, choose <strong>Smart Line Art (Pure Centerline)</strong> for junction-clean single strokes across crossings, or <strong>Line Art + Solid Fills (Smart Hybrid)</strong> to fill thick eyes/shadows as true hole-preserving <code>drawQuads</code> alongside crisp strokes. Use <strong>Variable-Width Ink</strong> for tapered calligraphic ribbons, toggle <strong>Crop Trace Area</strong> to isolate part of an image, and switch <strong>Preview</strong> to <strong>Ink Mask + Vectors</strong> to fine-tune <strong>Sensitivity</strong> and <strong>Spur Trim</strong> before clicking <strong>Auto-Draw Image → Reticle</strong>.
+        <h4>4. Auto Drawing Images &amp; Importing .svg Art</h4>
+        <p>
+          Click <strong>Ref Image</strong> (or drag and drop a PNG, JPG, or WebP onto the canvas), or click <strong>Import .svg</strong> to convert crisp SVG vector paths and <code>&lt;text&gt;</code> or <code>&lt;foreignObject&gt;</code> labels directly without rasterizing. In <strong>Ref Image &amp; Pro Auto-Draw</strong>, choose <strong>Smart Line Art (Pure Centerline)</strong> for junction clean single strokes across crossings, or <strong>Line Art + Solid Fills (Smart Hybrid)</strong> to fill thick eyes and shadows as true hole preserving <code>drawQuads</code> alongside crisp strokes. Use <strong>Variable-Width Ink</strong> for tapered calligraphic ribbons, toggle <strong>Crop Trace Area</strong> to isolate part of an image, and switch <strong>Preview</strong> to <strong>Ink Mask + Vectors</strong> to fine tune <strong>Sensitivity</strong> and <strong>Spur Trim</strong> before clicking <strong>Auto-Draw Image → Reticle</strong>.
         </p>
-        <h4 style="margin: 0 0 6px; color: var(--accent);">5. Optimizing Sight Complexity</h4>
-        <p style="margin: 0 0 12px; color: var(--text-muted);">
-          Use the <strong>Detail Kept (5%–99%)</strong> slider in <strong>Sight Optimizer &amp; Complexity</strong> to smoothly reduce line/quad counts while staying inside War Thunder's engine limits. Click <strong>↩ Undo Optimize</strong> anytime to restore full detail.
+        <h4>5. Optimizing Sight Complexity</h4>
+        <p>
+          Use the <strong>Detail Kept (5% to 99%)</strong> slider in <strong>Sight Optimizer &amp; Complexity</strong> to smoothly reduce line and quad counts while staying inside War Thunder engine limits. Click <strong>Undo Optimize</strong> anytime to restore full detail.
         </p>
-        <h4 style="margin: 0 0 6px; color: var(--accent);">6. Circular Rangefinders (TZF-Style Radial Dials) &amp; Range Preview</h4>
-        <p style="margin: 0 0 12px; color: var(--text-muted);">
-          Open <strong>Circular Rangefinder (Radial)</strong> in the right sidebar to build native War Thunder radial scales (<code>ballistics { bullet { radial:b=yes } }</code> or top-level <code>radial:b=yes</code>), or assign per-element <code>moveRadial:b=yes</code> under <strong>Selection &amp; CAD</strong>. Click <strong>◎ Range Preview</strong> in the top bar to scrub or animate 0–4000 m zeroing, optic zoom, and rangefinder/reload HUD simulation.
+        <h4>6. Circular Rangefinders (TZF Style Radial Dials) &amp; Range Preview</h4>
+        <p>
+          Open <strong>Circular Rangefinder (Radial)</strong> in the right sidebar to build native War Thunder radial scales (<code>ballistics { bullet { radial:b=yes } }</code> or top level <code>radial:b=yes</code>), or assign per element <code>moveRadial:b=yes</code> under <strong>Selection &amp; CAD</strong>. Click <strong>Range Preview</strong> in the top bar to scrub or animate 0 to 4000 m zeroing, optic zoom, and rangefinder or reload HUD simulation.
         </p>
-        <h4 style="margin: 0 0 6px; color: var(--accent);">7. Installing Your Files in War Thunder &amp; Troubleshooting</h4>
-        <p style="margin: 0; color: var(--text-muted);">
+        <h4>7. Installing Your Files in War Thunder &amp; Troubleshooting</h4>
+        <p style="margin-bottom: 0;">
           When saving both files (ensure filenames <strong>have no spaces</strong>):<br/>
           1. Place <strong><code>&lt;filename&gt;_reticle.blk</code></strong> inside:<br/>
           &nbsp;&nbsp;• All ground vehicles: <code>C:\Users\&lt;username&gt;\Documents\My Games\WarThunder\Saves\&lt;player-ID&gt;\production\UserSights\all_tanks\&lt;filename&gt;_reticle.blk</code><br/>
@@ -1371,25 +1447,25 @@
           2. Place <strong><code>&lt;filename&gt;_preset.blk</code></strong> inside:<br/>
           &nbsp;&nbsp;• HUD Presets folder: <code>C:\Users\&lt;username&gt;\Documents\My Games\WarThunder\Saves\&lt;player-ID&gt;\production\UserSights\tank_sight_presets\&lt;filename&gt;_preset.blk</code><br/>
           3. In War Thunder (<strong>Options → Common Battle Settings → Sight settings</strong>), select <strong><code>&lt;filename&gt;_preset</code></strong> under <strong>Choose preset</strong> (which automatically loads <code>&lt;filename&gt;_reticle</code> under <strong>Reticle</strong>).<br/>
-          <strong>Troubleshooting:</strong> <code>Alt + F9</code> to reload sights in-game most probably will not work (a long-standing War Thunder bug). <strong>Reboot the game</strong> after adding or editing a sight, and ensure filenames contain <strong>no spaces</strong>.
+          <strong>Troubleshooting:</strong> <code>Alt + F9</code> to reload sights in game most probably will not work (a known War Thunder limitation). <strong>Restart the game</strong> after adding or editing a sight, and ensure filenames contain <strong>no spaces</strong>.
         </p>
       </div>
       <div class="modal-footer modal-footer-between">
         <span class="credits-inline muted-note">Credits: <a href="https://github.com/joshua-cislini" target="_blank" rel="noopener noreferrer">github.com/joshua-cislini</a></span>
-        <button id="btnGuideDone" class="btn btn-primary">Got It</button>
+        <button id="btnGuideDone" class="btn btn-primary">Close Guide</button>
       </div>
     </div>
   </div>
 
   <!-- Import / Complexity Advisory & Confirmation Modal -->
-  <div class="modal-backdrop" id="importAdvisoryModal" hidden>
-    <div class="modal-dialog" style="max-width: 560px;">
+  <div class="modal-backdrop" id="importAdvisoryModal" role="dialog" aria-modal="true" aria-labelledby="importAdvisoryTitle" hidden>
+    <div class="modal-dialog" style="max-width: 560px; height: auto; max-height: 86vh;">
       <div class="modal-header">
         <div class="modal-title">
-          <strong id="importAdvisoryTitle">Drawing Import Advisory</strong>
+          <strong id="importAdvisoryTitle" class="title-3">Drawing Import Advisory</strong>
           <span class="mono muted-note" id="importAdvisorySubtitle">Review before continuing</span>
         </div>
-        <button id="btnCloseAdvisory" class="btn btn-icon" title="Cancel">✕</button>
+        <button id="btnCloseAdvisory" class="btn btn-icon" title="Cancel" aria-label="Close advisory">✕</button>
       </div>
       <div class="modal-body advisory-modal-body" id="importAdvisoryBody"></div>
       <div class="modal-footer advisory-modal-footer">

@@ -102,7 +102,11 @@ Because the editor runs 100% client-side in HTML5/CSS/JS, you can host the folde
   - **`Apply Changes to Canvas`**: Re-parses your edited raw `.blk` text and updates the canvas immediately.
 - **`◎ Range Preview`**: Opens the interactive **Rangefinder & Circular Dial Simulator** floating bar above the viewport HUD so you can scrub (`0–4000 m`), auto-play (`▶`), choose shell velocities, simulate optic zoom (`0.50x–3.50x`), trigger **`⚡ RF / Reload`** (live laser rangefinding progress bar + gun reload countdown), and watch circular rangefinders (`radial:b=yes`, `ballistics`, `moveRadial:b=yes`) and range ladders move live.
 - **`? Guide`**: Opens a quick-reference help modal inside the app summarizing key workflows and War Thunder setup.
-- **`Save .blk`**: Exports the full `.blk` file (`Ctrl+S`). In supported browsers (Chrome/Edge/Brave), uses the native Save File Picker so you can overwrite or save straight into a local folder; otherwise downloads `<sight_name>.blk`. Spaces in suggested filenames are automatically replaced with `_`, and saving a filename that still contains spaces triggers a warning toast.
+- **`Save .blk`**: Primary save action (`Ctrl+S`). Automatically detects document contents:
+  - **Both Reticle & HUD Preset Present**: Automatically exports **both** cleanly separated files at once: `<filename>_reticle.blk` (for `UserSights/all_tanks/` or `<tank-ID>/`) and `<filename>_preset.blk` (for `UserSights/tank_sight_presets/`, with `crosshair:t="<filename>_reticle"` pre-linked).
+  - **Reticle Only**: Automatically saves only `<filename>_reticle.blk` without generating empty or dummy preset files.
+  - **HUD Preset Only**: Automatically saves only `<filename>_preset.blk` without generating empty reticle files.
+  - Hovering over the button reveals live tooltip guidance indicating exactly what files will be produced. Dedicated single-mode export buttons remain accessible in Panel 3 whenever an explicit single-format save is preferred.
 
 ### Center Canvas Viewport & Floating HUD
 - **16:9 In-Game Screen Frame**: The canvas draws the exact **16:9 in-game screen boundaries** (`Y` from `-0.5` to `+0.5`, `X` from `-0.8889` to `+0.8889`). When **`Sight Mask`** is enabled, the 16:9 frame is shaded with a radial optic vignette and `2px` border; when disabled, the background fills the viewport with a subtle `1.5px` 16:9 guide frame.
