@@ -612,11 +612,18 @@
           </summary>
           <div class="panel-body">
             <div class="field-row">
-              <label for="selDocType">Export Format</label>
-              <select id="selDocType" title="Choose Classic Custom Sight (drawLines) or HUD Preset (tank_sight_presets/*.blk)">
-                <option value="sight">Classic Custom Sight (UserSights)</option>
-                <option value="hud_preset">HUD Preset (tank_sight_presets)</option>
+              <label for="selDocType">Export Mode</label>
+              <select id="selDocType" title="War Thunder stores Reticles (all_tanks / <tank-ID>) and HUD Presets (tank_sight_presets) in two separate files">
+                <option value="both">Both Files (&lt;name&gt;_reticle.blk + &lt;name&gt;_preset.blk)</option>
+                <option value="sight">Reticle Only (&lt;name&gt;_reticle.blk → all_tanks)</option>
+                <option value="hud_preset">HUD Preset Only (&lt;name&gt;_preset.blk → tank_sight_presets)</option>
               </select>
+            </div>
+
+            <div class="btn-row">
+              <button id="btnSaveBothBlk" class="btn btn-xs btn-primary" style="flex: 1;" title="Export both <filename>_reticle.blk (for UserSights/all_tanks/) and <filename>_preset.blk (for UserSights/tank_sight_presets/)">Save Both (_reticle + _preset)</button>
+              <button id="btnSaveReticleOnly" class="btn btn-xs btn-secondary" title="Export only <filename>_reticle.blk for UserSights/all_tanks/ or <tank-ID>">_reticle.blk</button>
+              <button id="btnSavePresetOnly" class="btn btn-xs btn-secondary" title="Export only <filename>_preset.blk for UserSights/tank_sight_presets/">_preset.blk</button>
             </div>
 
             <div class="sub-box">
@@ -631,8 +638,8 @@
             </div>
 
             <div class="hud-preset-warn" id="hudVectorExportHint" hidden>
-              <span>HUD Preset exports <code>tank_sight_presets</code> config without <code>drawLines</code>.</span>
-              <button id="btnConvertToClassicSight" class="btn btn-xs btn-secondary">Switch to Classic Sight</button>
+              <span>War Thunder keeps Reticles and HUD Presets in 2 separate folders. Export <strong>Both Files</strong> to save <code>_reticle.blk</code> + <code>_preset.blk</code>.</span>
+              <button id="btnConvertToClassicSight" class="btn btn-xs btn-secondary">Export Both</button>
             </div>
 
             <div class="sub-box">
@@ -1297,14 +1304,21 @@
           <strong>Raw War Thunder .blk Source</strong>
           <span class="mono muted-note" id="codeStats"></span>
         </div>
-        <button id="btnCloseModal" class="btn btn-icon" title="Close">✕</button>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <select id="selRawModalTarget" title="Inspect either the Reticle file or the HUD Preset file">
+            <option value="sight">Reticle (_reticle.blk → all_tanks / &lt;tank&gt;)</option>
+            <option value="hud_preset">HUD Preset (_preset.blk → tank_sight_presets)</option>
+          </select>
+          <button id="btnCloseModal" class="btn btn-icon" title="Close">✕</button>
+        </div>
       </div>
       <div class="modal-body">
         <textarea id="rawBlkTextarea" spellcheck="false"></textarea>
       </div>
       <div class="modal-footer">
         <button id="btnCopyBlk" class="btn btn-secondary">Copy to Clipboard</button>
-        <button id="btnModalDownload" class="btn btn-secondary">Download .blk</button>
+        <button id="btnModalDownload" class="btn btn-secondary">Download This .blk</button>
+        <button id="btnModalDownloadBoth" class="btn btn-secondary">Download Both (_reticle + _preset)</button>
         <button id="btnApplyRawBlk" class="btn btn-primary">Apply Changes to Canvas</button>
       </div>
     </div>
@@ -1329,13 +1343,16 @@
         <p style="margin: 0 0 12px; color: var(--text-muted);">
           Select any sight from <code>sights/</code> or click <strong>Overlay .blk</strong>. Classic preset files synthesize their static crosshair &amp; range scale into the <strong>Base Layer</strong>. Lock the Base Layer (<strong>🔒</strong>) and draw your custom artwork on the <strong>Drawn Art Overlay</strong> layer!
         </p>
-        <h4 style="margin: 0 0 6px; color: var(--accent);">3. Tank Sight HUD Presets (<code>tank_sight_presets</code>)</h4>
+        <h4 style="margin: 0 0 6px; color: var(--accent);">3. Reticles vs. Tank Sight HUD Presets (Two-File Architecture)</h4>
         <p style="margin: 0 0 12px; color: var(--text-muted);">
-          Open any <code>tank_sight_presets/*.blk</code> file or use <strong>Tank Sight Preset (HUD)</strong> to customize <code>crosshair:t</code> (previewing any custom <code>.blk</code> backdrop underneath), <code>reticle</code> thickness/font overrides, 4-mode optic colors (Day/Illum/NVG/Thermal), and all 5 draggable 1920x1080 HUD widgets (<code>rangefinder</code>, <code>turret</code>, <code>fov</code>, <code>gunReady</code>, <code>bulletType</code>).
+          War Thunder separates custom sights into <strong>two distinct <code>.blk</code> files in two separate folders</strong> (HUD settings placed inside <code>all_tanks</code> or <code>&lt;tank-ID&gt;</code> sight files are ignored by the game):<br/>
+          • <strong><code>&lt;filename&gt;_reticle.blk</code></strong>: Contains only the drawn reticle geometry (<code>drawLines</code>, <code>drawQuads</code>, <code>drawCircles</code>, <code>drawTexts</code>, <code>crosshair_distances</code>, <code>matchExpClass</code>) and goes into <code>UserSights\all_tanks\</code> or <code>UserSights\&lt;tank-ID&gt;\</code>.<br/>
+          • <strong><code>&lt;filename&gt;_preset.blk</code></strong>: Contains the 1920x1080 HUD widgets (<code>rangefinder</code>, <code>turret</code>, <code>fov</code>, <code>gunReady</code>, <code>bulletType</code>), 4-mode optic colors (Day/Illum/NVG/Thermal), <code>reticle</code> thickness/font overrides, and <code>crosshair:t="&lt;filename&gt;_reticle"</code> (linking it automatically to your reticle file), and goes into <code>UserSights\tank_sight_presets\</code>.<br/>
+          Click <strong>Save Both (_reticle + _preset)</strong> in <strong>Tank Sight Preset (HUD)</strong> (or set <strong>Export Mode</strong> to <strong>Both Files</strong> and click <strong>Save .blk</strong>) to export both linked files at once!
         </p>
         <h4 style="margin: 0 0 6px; color: var(--accent);">4. Auto-Drawing Images &amp; Importing .svg Art</h4>
         <p style="margin: 0 0 12px; color: var(--text-muted);">
-          Click <strong>Ref Image</strong> (or drag &amp; drop a PNG/JPG/WebP onto the canvas), or click <strong>Import .svg</strong> to convert crisp SVG vector paths directly without rasterizing. In <strong>Ref Image &amp; Pro Auto-Draw</strong>, choose <strong>Smart Line Art (Pure Centerline)</strong> for junction-clean single strokes across crossings, or <strong>Line Art + Solid Fills (Smart Hybrid)</strong> to fill thick eyes/shadows as true hole-preserving <code>drawQuads</code> alongside crisp strokes. Use <strong>Variable-Width Ink</strong> for tapered calligraphic ribbons, toggle <strong>Crop Trace Area</strong> to isolate part of an image, and switch <strong>Preview</strong> to <strong>Ink Mask + Vectors</strong> to fine-tune <strong>Sensitivity</strong> and <strong>Spur Trim</strong> before clicking <strong>Auto-Draw Image → Reticle</strong>.
+          Click <strong>Ref Image</strong> (or drag &amp; drop a PNG/JPG/WebP onto the canvas), or click <strong>Import .svg</strong> to convert crisp SVG vector paths and <code>&lt;text&gt;</code>/<code>&lt;foreignObject&gt;</code> labels directly without rasterizing. In <strong>Ref Image &amp; Pro Auto-Draw</strong>, choose <strong>Smart Line Art (Pure Centerline)</strong> for junction-clean single strokes across crossings, or <strong>Line Art + Solid Fills (Smart Hybrid)</strong> to fill thick eyes/shadows as true hole-preserving <code>drawQuads</code> alongside crisp strokes. Use <strong>Variable-Width Ink</strong> for tapered calligraphic ribbons, toggle <strong>Crop Trace Area</strong> to isolate part of an image, and switch <strong>Preview</strong> to <strong>Ink Mask + Vectors</strong> to fine-tune <strong>Sensitivity</strong> and <strong>Spur Trim</strong> before clicking <strong>Auto-Draw Image → Reticle</strong>.
         </p>
         <h4 style="margin: 0 0 6px; color: var(--accent);">5. Optimizing Sight Complexity</h4>
         <p style="margin: 0 0 12px; color: var(--text-muted);">
@@ -1345,13 +1362,16 @@
         <p style="margin: 0 0 12px; color: var(--text-muted);">
           Open <strong>Circular Rangefinder (Radial)</strong> in the right sidebar to build native War Thunder radial scales (<code>ballistics { bullet { radial:b=yes } }</code> or top-level <code>radial:b=yes</code>), or assign per-element <code>moveRadial:b=yes</code> under <strong>Selection &amp; CAD</strong>. Click <strong>◎ Range Preview</strong> in the top bar to scrub or animate 0–4000 m zeroing, optic zoom, and rangefinder/reload HUD simulation.
         </p>
-        <h4 style="margin: 0 0 6px; color: var(--accent);">7. Installing Your Sight &amp; Troubleshooting</h4>
+        <h4 style="margin: 0 0 6px; color: var(--accent);">7. Installing Your Files in War Thunder &amp; Troubleshooting</h4>
         <p style="margin: 0; color: var(--text-muted);">
-          Click <strong>Save .blk</strong> (make sure the sight filename <strong>has no spaces</strong>, e.g. <code>my_sight.blk</code>) and place it inside:<br/>
-          • Specific vehicle: <code>C:\Users\&lt;username&gt;\Documents\My Games\WarThunder\Saves\&lt;player-ID&gt;\production\UserSights\&lt;tank-ID&gt;\&lt;sight-name&gt;.blk</code><br/>
-          • All ground vehicles: <code>C:\Users\&lt;username&gt;\Documents\My Games\WarThunder\Saves\&lt;player-ID&gt;\production\UserSights\all_tanks\&lt;sight-name&gt;.blk</code><br/>
-          • Tank Sight HUD Preset: <code>C:\Users\&lt;username&gt;\Documents\My Games\WarThunder\Saves\&lt;player-ID&gt;\production\UserSights\tank_sight_presets\&lt;preset-name&gt;.blk</code><br/>
-          <strong>Troubleshooting:</strong> <code>Alt + F9</code> to reload sights in-game most probably will not work (a long-standing War Thunder bug). <strong>Reboot the game</strong> after adding or editing a sight, and ensure the sight filename contains <strong>no spaces</strong>.
+          When saving both files (ensure filenames <strong>have no spaces</strong>):<br/>
+          1. Place <strong><code>&lt;filename&gt;_reticle.blk</code></strong> inside:<br/>
+          &nbsp;&nbsp;• All ground vehicles: <code>C:\Users\&lt;username&gt;\Documents\My Games\WarThunder\Saves\&lt;player-ID&gt;\production\UserSights\all_tanks\&lt;filename&gt;_reticle.blk</code><br/>
+          &nbsp;&nbsp;• Or specific vehicle: <code>C:\Users\&lt;username&gt;\Documents\My Games\WarThunder\Saves\&lt;player-ID&gt;\production\UserSights\&lt;tank-ID&gt;\&lt;filename&gt;_reticle.blk</code><br/>
+          2. Place <strong><code>&lt;filename&gt;_preset.blk</code></strong> inside:<br/>
+          &nbsp;&nbsp;• HUD Presets folder: <code>C:\Users\&lt;username&gt;\Documents\My Games\WarThunder\Saves\&lt;player-ID&gt;\production\UserSights\tank_sight_presets\&lt;filename&gt;_preset.blk</code><br/>
+          3. In War Thunder (<strong>Options → Common Battle Settings → Sight settings</strong>), select <strong><code>&lt;filename&gt;_preset</code></strong> under <strong>Choose preset</strong> (which automatically loads <code>&lt;filename&gt;_reticle</code> under <strong>Reticle</strong>).<br/>
+          <strong>Troubleshooting:</strong> <code>Alt + F9</code> to reload sights in-game most probably will not work (a long-standing War Thunder bug). <strong>Reboot the game</strong> after adding or editing a sight, and ensure filenames contain <strong>no spaces</strong>.
         </p>
       </div>
       <div class="modal-footer modal-footer-between">

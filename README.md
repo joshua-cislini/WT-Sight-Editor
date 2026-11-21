@@ -196,8 +196,8 @@ Create and edit historical TZF-style or modern circular rotating rangefinder sig
 ---
 
 ### Panel 3: Tank Sight Preset (HUD)
-Full visual editor for War Thunder `UserSights/tank_sight_presets/*.blk` HUD preset files:
-- **Export Format (`Classic Custom Sight` vs `HUD Preset (tank_sight_presets)`)**: Chooses whether `Save .blk` / `Raw .blk` exports a classic CDK sight (`drawLines{}`) or a clean `tank_sight_presets` preset file without polluting `drawLines` or `matchExpClass`.
+Full visual editor for War Thunder `UserSights/tank_sight_presets/*.blk` HUD preset files, built around War Thunder's two-file / two-folder architecture:
+- **Two-File Export Mode (`Both Files (<name>_reticle.blk + <name>_preset.blk)`, `Reticle Only`, or `HUD Preset Only`)**: War Thunder ignores HUD blocks placed inside `UserSights/all_tanks/` (or `<tank-ID>/`) and ignores `drawLines` placed inside `UserSights/tank_sight_presets/`. Choose whether **`Save .blk`** exports both clean files at once (`<filename>_reticle.blk` + `<filename>_preset.blk` automatically linked via `crosshair:t="<filename>_reticle"`), or use the dedicated **`Save Both (_reticle + _preset)`**, **`_reticle.blk`**, and **`_preset.blk`** buttons. The **`{ } Raw .blk`** code inspector also includes a target switcher (`Reticle (_reticle.blk)` vs `HUD Preset (_preset.blk)`) and a **`Download Both`** button.
 - **Quick HUD Preset Templates (`+ Apply`)**: One-click templates for **Pro Competitive HUD (All 5 Widgets)** (Day/Thermal green, Illum/NVG red-orange, blue `gunReady`, aligned RF/Ready row, `reticle` overrides enabled) and **Minimal Custom HUD (Default)**.
 - **Linked Reticle (`crosshair:t`) & Backdrop**:
   - Edit `crosshair:t="..."` (with autocomplete suggestions from classic sights in `sights/`) or click **`Load Backdrop .blk`** to preview any custom `.blk` reticle directly behind the HUD widgets with live **Range Preview** and **`reticle` overrides**.
@@ -379,27 +379,34 @@ Maps directly to War Thunder's top-level `.blk` header properties and blocks:
 4. Adjust **`Sensitivity`**, **`Spur Trim`**, and **`Curve Smoothing`** while watching the live preview (try **`Ink Mask + Vectors`** to inspect exact pixel detection). *(Enable **`Invert B/W`** for bright lines on a dark background, or **`Variable-Width Ink`** for calligraphic weight modulation).*
 5. Click **`Auto-Draw Image → Reticle`**, then refine individual chains with **Smooth Curves**, **Weld Gaps**, or **Optimize Sight**.
 
-### Workflow 3: Building or Editing a Tank Sight HUD Preset (`tank_sight_presets`)
-1. Open an existing preset from `UserSights/tank_sight_presets/` via **`Open .blk`** (or choose a quick template in **Panel 3: Tank Sight Preset (HUD)** and click **`+ Apply`**).
-2. Type the custom sight filename (without `.blk`) in **`crosshair:t`**, or click **`Load Backdrop .blk`** to render your custom reticle directly underneath the HUD elements.
-3. Adjust **`reticle {}`** thickness/font overrides and toggle **`Drag HUD`** to drag **`RF`**, **`Turret`**, **`Ready`**, and **`Ammo`** into exact 1920x1080 positions with live snap guides.
-4. Configure per-mode colors (**Day** / **Illum** / **NVG** / **Thermal**), toggle the top-bar optic preview modes to inspect contrast, and open **`◎ Range Preview`** → **`⚡ RF / Reload`** to simulate live rangefinding & reload countdowns before clicking **`Save .blk`**.
+### Workflow 3: Building a Complete Sight + HUD Preset (`_reticle.blk` + `_preset.blk`)
+1. Design or trace your custom reticle on the canvas, and open **Panel 3: Tank Sight Preset (HUD)** to customize the 1920x1080 HUD widgets (or apply a quick template like **Pro Full HUD** / **Custom Minimal HUD**).
+2. Toggle **`Drag HUD`** to drag **`RF`**, **`Turret`**, **`FOV`**, **`Ready`**, and **`Ammo`** into exact 1920x1080 positions with live snap guides, and configure **`reticle {}`** thickness/font overrides and 4-mode optic colors (**Day** / **Illum** / **NVG** / **Thermal**).
+3. Set **Export Mode** to **`Both Files (<name>_reticle.blk + <name>_preset.blk)`** (or click **`Save Both (_reticle + _preset)`**).
+4. **WT Reticle Studio Pro** automatically exports two clean, separated files:
+   - **`<filename>_reticle.blk`** (pure reticle geometry, `matchExpClass`, and distance scales — zero HUD preset pollution)
+   - **`<filename>_preset.blk`** (pure 1920x1080 HUD layout + 4-mode colors, with `crosshair:t="<filename>_reticle"` automatically linking to your companion reticle file).
 
 ---
 
-## 8. How to Install Your `.blk` Sight in War Thunder
+## 8. How to Install Your `.blk` Sight & HUD Preset in War Thunder
 
-1. Click **`Save .blk`** in the top-right corner of **WT Reticle Studio Pro** (or press **`Ctrl + S`**). Make sure your sight's filename **does not contain spaces** (for example, use `my_custom_sight.blk`).
-2. Copy your saved `.blk` file into your War Thunder **`UserSights`** folder:
-   - **For a specific tank**:
-     `C:\Users\<username>\Documents\My Games\WarThunder\Saves\<player-ID>\production\UserSights\<tank-ID>\<sight-name>.blk`
-     *(Tip: You can generate a tank's folder automatically in War Thunder via **Options → Common Battle Settings → Grid sight → Add a grid sight** while in Test Drive with that tank).*
-   - **For ALL ground vehicles at once**:
-     `C:\Users\<username>\Documents\My Games\WarThunder\Saves\<player-ID>\production\UserSights\all_tanks\<sight-name>.blk`
-     *(Make sure the vehicle classes you want are checked under **`matchExpClass (all_tanks)`** in **Sight Global Settings (CDK)**; all four are enabled by default).*
-   - **For a Tank Sight HUD Preset (`HUD Preset` export mode)**:
-     `C:\Users\<username>\Documents\My Games\WarThunder\Saves\<player-ID>\production\UserSights\tank_sight_presets\<preset-name>.blk`
-3. Open War Thunder (or reboot/restart the game if it was already running), go to **Options → Main Parameters → Common Battle Settings → Sight Settings** (or **Grid sight**), and select your custom sight from the dropdown!
+War Thunder separates **Reticles** (the drawn vector lines, circles, quads, and range scales) and **HUD Presets** (the 1920x1080 Rangefinder, Turret, FOV, Gun Ready, Bullet Type widgets, and 4-mode optic colors) into **two separate `.blk` files in two different folders**:
+
+1. Click **`Save .blk`** in the top-right corner of **WT Reticle Studio Pro** (or press **`Ctrl + S`** / click **`Save Both (_reticle + _preset)`** in Panel 3). Make sure your base filename **does not contain spaces** (for example, `mandala`).
+2. Place the two exported files into their corresponding War Thunder **`UserSights`** folders:
+   - **File 1 — Reticle (`<filename>_reticle.blk`)**:
+     - **For ALL ground vehicles at once**:
+       `C:\Users\<username>\Documents\My Games\WarThunder\Saves\<player-ID>\production\UserSights\all_tanks\<filename>_reticle.blk`
+       *(Make sure the vehicle classes you want are checked under **`matchExpClass (all_tanks)`** in **Sight Global Settings (CDK)**; all four are enabled by default).*
+     - **Or for a specific tank only**:
+       `C:\Users\<username>\Documents\My Games\WarThunder\Saves\<player-ID>\production\UserSights\<tank-ID>\<filename>_reticle.blk`
+   - **File 2 — HUD Preset (`<filename>_preset.blk`)**:
+     - Place in your **`tank_sight_presets`** folder:
+       `C:\Users\<username>\Documents\My Games\WarThunder\Saves\<player-ID>\production\UserSights\tank_sight_presets\<filename>_preset.blk`
+     - *(Note: HUD widget blocks placed inside `all_tanks` or `<tank-ID>` are ignored by War Thunder, and `drawLines` placed inside `tank_sight_presets` are ignored. Exporting `<filename>_preset.blk` automatically sets `crosshair:t="<filename>_reticle"` so selecting the preset loads your reticle too!)*
+3. Open War Thunder (or press **`Alt + F9`** in Test Drive to reload custom sights), go to **Options → Main Parameters → Ground Vehicle Battle Settings → Sight settings**:
+   - Under **Choose preset**, select **`<filename>_preset`** (this loads your HUD layout, colors, and automatically selects `<filename>_reticle` under **Reticle**), or select **`<filename>_reticle`** directly under **Reticle**!
 
 ---
 

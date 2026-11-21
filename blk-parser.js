@@ -1494,23 +1494,39 @@
 
   function syncHeaderToSettings(doc) {
     const h = doc.header;
-    const settings = doc.settings.map((s) => ({ ...s }));
+    // Strip HUD-preset-only keys from classic reticle settings
+    const hudOnlyKeys = new Set(['crosshair', 'crosshairNvColor', 'crosshairThermalColor']);
+    const settings = (doc.settings || [])
+      .filter((s) => !hudOnlyKeys.has(s.key))
+      .map((s) => ({ ...s }));
     const p2Str = (arr, defA = 0, defB = 0) => `${formatNum(arr?.[0] ?? defA)}, ${formatNum(arr?.[1] ?? defB)}`;
 
-    // Ensure essential classic CDK headers are present if converting a HUD-only document into a classic custom sight
-    const hasCustomArt = (doc.lines.length + doc.quads.length + doc.circles.length + doc.texts.length) > 0;
-    const missingClassicHeader = !settings.some((s) => s.key === 'drawCentralLineVert');
-    if (doc.docType !== 'hud_preset' && (hasCustomArt || missingClassicHeader) && settings.some((s) => s.key === 'crosshair')) {
+    // Ensure essential classic CDK headers exist (e.g. when user started from Pro.blk HUD preset and drew a reticle)
+    const missingClassicHeader = !settings.some((s) => s.key === 'drawCentralLineVert' || s.key === 'crosshairHorVertSize');
+    if (missingClassicHeader) {
       const defaults = [
         ['thousandth', 't', quoteStr(h.thousandthMode || 'ussr')],
         ['crosshairHorVertSize', 'p2', '3, 2'],
-        ['fontSizeMult', 'r', formatNum(h.fontSizeMult)],
-        ['lineSizeMult', 'r', formatNum(h.lineSizeMult)],
+        ['rangefinderProgressBarColor1', 'c', '0, 255, 0, 64'],
+        ['rangefinderProgressBarColor2', 'c', '255, 255, 255, 64'],
+        ['rangefinderTextScale', 'r', '0.7'],
+        ['rangefinderUseThousandth', 'b', 'no'],
+        ['rangefinderVerticalOffset', 'r', '0.1'],
+        ['rangefinderHorizontalOffset', 'r', '5'],
+        ['detectAllyTextScale', 'r', '0.7'],
+        ['detectAllyOffset', 'p2', '4, 0.05'],
+        ['fontSizeMult', 'r', formatNum(h.fontSizeMult ?? 1)],
+        ['lineSizeMult', 'r', formatNum(h.lineSizeMult ?? 1)],
         ['drawCentralLineVert', 'b', h.drawCentralLineVert ? 'yes' : 'no'],
         ['drawCentralLineHorz', 'b', h.drawCentralLineHorz ? 'yes' : 'no'],
-        ['drawSightMask', 'b', h.drawSightMask ? 'yes' : 'no'],
-        ['useSmoothEdge', 'b', h.useSmoothEdge ? 'yes' : 'no'],
-        ['drawDistanceCorrection', 'b', h.drawDistanceCorrection ? 'yes' : 'no']
+        ['drawSightMask', 'b', h.drawSightMask !== false ? 'yes' : 'no'],
+        ['useSmoothEdge', 'b', h.useSmoothEdge !== false ? 'yes' : 'no'],
+        ['crosshairColor', 'c', formatColor(h.crosshairColor)],
+        ['crosshairLightColor', 'c', formatColor(h.crosshairLightColor)],
+        ['crosshairDistHorSizeMain', 'p2', p2Str(h.crosshairDistHorSizeMain, 0.03, 0.02)],
+        ['crosshairDistHorSizeAdditional', 'p2', p2Str(h.crosshairDistHorSizeAdditional, 0.005, 0.003)],
+        ['distanceCorrectionPos', 'p2', '-0.26, -0.05'],
+        ['drawDistanceCorrection', 'b', h.drawDistanceCorrection !== false ? 'yes' : 'no']
       ];
       for (const [k, t, v] of defaults) {
         if (!settings.some((s) => s.key === k)) {
@@ -1520,7 +1536,6 @@
     }
 
     const managed = [
-      ['crosshair', 't', quoteStr(h.crosshairPreset || 'Default_Sight')],
       ['thousandth', 't', quoteStr(h.thousandthMode || 'ussr')],
       ['fontSizeMult', 'r', formatNum(h.fontSizeMult)],
       ['lineSizeMult', 'r', formatNum(h.lineSizeMult)],
@@ -1532,8 +1547,6 @@
       ['drawDistanceCorrection', 'b', h.drawDistanceCorrection ? 'yes' : 'no'],
       ['crosshairColor', 'c', formatColor(h.crosshairColor)],
       ['crosshairLightColor', 'c', formatColor(h.crosshairLightColor)],
-      ['crosshairNvColor', 'c', formatColor(h.crosshairNvColor)],
-      ['crosshairThermalColor', 'c', formatColor(h.crosshairThermalColor)],
       ['shotDistScaleOffset', 'i', String(Math.round(h.shotDistScaleOffset || 0))],
       ['radial', 'b', h.radial ? 'yes' : 'no'],
       ['circleMode', 'b', h.circleMode ? 'yes' : 'no'],
@@ -1554,8 +1567,7 @@
       const exists = settings.some((s) => s.key === key && (!type || !s.type || s.type === type));
       const modified = doc.modifiedHeaderKeys && (
         doc.modifiedHeaderKeys.has(key) ||
-        (key === 'thousandth' && doc.modifiedHeaderKeys.has('thousandthMode')) ||
-        (key === 'crosshair' && doc.modifiedHeaderKeys.has('crosshairPreset'))
+        (key === 'thousandth' && doc.modifiedHeaderKeys.has('thousandthMode'))
       );
       if (exists || modified) {
         upsertSetting(settings, key, type, val);
@@ -1603,31 +1615,17 @@
     ].join('\n');
   }
 
-  function serializeHudPreset(doc) {
+  function serializeHudPreset(doc, options = {}) {
     const h = doc.header;
+    const targetCrosshair = (options.linkedReticleName || h.crosshairPreset || 'Default_Sight').replace(/\.blk$/i, '');
     const linesOut = [
-      `crosshair:t=${quoteStr(h.crosshairPreset || 'Default_Sight')}`,
+      `crosshair:t=${quoteStr(targetCrosshair)}`,
       `crosshairColor:c=${formatColor(h.crosshairColor)}`,
       `crosshairLightColor:c=${formatColor(h.crosshairLightColor)}`,
       `crosshairNvColor:c=${formatColor(h.crosshairNvColor)}`,
       `crosshairThermalColor:c=${formatColor(h.crosshairThermalColor)}`,
       `shotDistScaleOffset:i=${Math.round(h.shotDistScaleOffset || 0)}`
     ];
-
-    const managedHudKeys = new Set([
-      'crosshair',
-      'crosshairColor',
-      'crosshairLightColor',
-      'crosshairNvColor',
-      'crosshairThermalColor',
-      'shotDistScaleOffset'
-    ]);
-    for (const s of (doc.settings || [])) {
-      if (!managedHudKeys.has(s.key)) {
-        const typePart = s.type ? `:${s.type}` : '';
-        linesOut.push(`${s.key}${typePart}=${s.rawValue}`);
-      }
-    }
 
     const widgets = doc.hudWidgets || {};
     const blockStrings = [];
@@ -1638,13 +1636,6 @@
     }
     if (h.reticle && h.reticle.included) {
       blockStrings.push(buildReticleBlock(h.reticle));
-    }
-
-    const classicBlockNames = new Set(['matchExpClass', 'crosshair_distances', 'crosshair_hor_ranges', 'ballistics']);
-    for (const blk of (doc.preservedBlocks || [])) {
-      if (!classicBlockNames.has(blk.name) && blk.rawText?.trim()) {
-        blockStrings.push(blk.rawText.trim());
-      }
     }
 
     if (blockStrings.length > 0) {
@@ -1660,8 +1651,8 @@
   }
 
   function serialize(doc, options = {}) {
-    if (doc.docType === 'hud_preset' && options.forceFormat !== 'sight') {
-      return serializeHudPreset(doc);
+    if (options.forceFormat === 'hud_preset' || (doc.docType === 'hud_preset' && options.forceFormat !== 'sight')) {
+      return serializeHudPreset(doc, options);
     }
 
     const excludeBaseLayer = options.excludeBaseLayer === true;
@@ -1673,7 +1664,12 @@
       linesOut.push(`${s.key}${typePart}=${s.rawValue}`);
     }
 
-    const preserved = (doc.preservedBlocks || []).map((b) => ({ ...b }));
+    // Only keep classic CDK blocks in the Reticle .blk file (HUD widget blocks belong in tank_sight_presets/*.blk)
+    const hudBlockNames = new Set([...HUD_WIDGET_ORDER, 'reticle']);
+    const preserved = (doc.preservedBlocks || [])
+      .filter((b) => !hudBlockNames.has(b.name))
+      .map((b) => ({ ...b }));
+
     const matchIdx = preserved.findIndex((b) => b.name === 'matchExpClass');
     const matchModified = doc.modifiedHeaderKeys && doc.modifiedHeaderKeys.has('matchExpClass');
     if (matchIdx !== -1 && matchModified) {
@@ -1685,11 +1681,18 @@
       });
     }
 
+    const distIdx = preserved.findIndex((b) => b.name === 'crosshair_distances');
     if (doc.modifiedHeaderKeys && doc.modifiedHeaderKeys.has('crosshair_distances')) {
-      const distIdx = preserved.findIndex((b) => b.name === 'crosshair_distances');
       const distRaw = buildDistancesBlock(doc.distances || []);
       if (distIdx !== -1) preserved[distIdx].rawText = distRaw;
       else preserved.push({ name: 'crosshair_distances', rawText: distRaw });
+    } else if (distIdx === -1) {
+      preserved.push({ name: 'crosshair_distances', rawText: buildDistancesBlock(doc.distances || []) });
+    }
+
+    const horIdx = preserved.findIndex((b) => b.name === 'crosshair_hor_ranges');
+    if (horIdx === -1) {
+      preserved.push({ name: 'crosshair_hor_ranges', rawText: 'crosshair_hor_ranges{\n}' });
     }
 
     if (doc.modifiedHeaderKeys && doc.modifiedHeaderKeys.has('ballistics')) {
@@ -1709,22 +1712,6 @@
         linesOut.push(blk.rawText.trim());
         linesOut.push('');
       }
-    }
-
-    const hudWidgets = doc.hudWidgets || {};
-    let emittedHud = false;
-    for (const name of HUD_WIDGET_ORDER) {
-      if (hudWidgets[name] && hudWidgets[name].included) {
-        if (!emittedHud && preserved.length === 0) linesOut.push('');
-        linesOut.push(buildHudWidgetBlock(name, hudWidgets[name]));
-        linesOut.push('');
-        emittedHud = true;
-      }
-    }
-    if (doc.header?.reticle?.included) {
-      if (!emittedHud && preserved.length === 0) linesOut.push('');
-      linesOut.push(buildReticleBlock(doc.header.reticle));
-      linesOut.push('');
     }
 
     const filterFn = (item) => !(excludeBaseLayer && item.layer === 'base');

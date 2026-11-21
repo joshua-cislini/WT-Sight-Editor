@@ -3190,7 +3190,8 @@
     drawSymmetryGuides();
 
     // 4. Built-in War Thunder Central Lines, Range Ticks & HUD Preset Backdrop
-    if (state.doc.docType === 'hud_preset') {
+    const ownPrimitives = state.doc.lines.length + state.doc.quads.length + state.doc.circles.length + state.doc.texts.length;
+    if ((state.doc.docType === 'hud_preset' || state.doc.docType === 'both') && ownPrimitives === 0) {
       renderHudBackdrop(theme);
     } else {
       drawCentralSightOverlay(theme);
@@ -8270,12 +8271,77 @@
     reader.readAsDataURL(file);
   }
 
-  async function saveBlkFile() {
-    const content = BlkParser.serialize(state.doc, {
+  function getExportFileNames(rawFileName) {
+    const cleanStem = (rawFileName || 'custom_sight')
+      .replace(/\.blk$/i, '')
+      .replace(/_(reticle|preset)$/i, '')
+      .replace(/\s+/g, '_')
+      .trim() || 'custom_sight';
+    return {
+      base: cleanStem,
+      reticleStem: `${cleanStem}_reticle`,
+      reticleFile: `${cleanStem}_reticle.blk`,
+      presetFile: `${cleanStem}_preset.blk`
+    };
+  }
+
+  function docHasActiveHudSettings(doc = state.doc) {
+    if (!doc) return false;
+    const widgets = doc.hudWidgets || {};
+    const anyWidget = BlkParser.HUD_WIDGET_ORDER.some((k) => widgets[k]?.included);
+    const hasRetOverride = !!doc.header?.reticle?.included;
+    return anyWidget || hasRetOverride;
+  }
+
+  async function saveBlkFile(forceMode = null) {
+    const explicitMode = typeof forceMode === 'string' ? forceMode : null;
+    const d = state.doc;
+    const totalPrimitives = d.lines.length + d.quads.length + d.circles.length + d.texts.length;
+    const hasHud = docHasActiveHudSettings(d);
+
+    let mode = explicitMode || d.docType || 'sight';
+    if (!explicitMode) {
+      // If the user has both reticle geometry and HUD preset settings active, export both separated files automatically
+      if (mode === 'hud_preset' && totalPrimitives > 0) mode = 'both';
+      else if (mode === 'sight' && hasHud && totalPrimitives > 0) mode = 'both';
+    }
+
+    const names = getExportFileNames(state.fileName);
+
+    if (mode === 'both') {
+      const reticleContent = BlkParser.serialize(d, {
+        forceFormat: 'sight',
+        excludeBaseLayer: !state.options.exportBase
+      });
+      const linkedCrosshair = totalPrimitives > 0 ? names.reticleStem : (d.header.crosshairPreset || names.reticleStem);
+      d.header.crosshairPreset = linkedCrosshair;
+      if ($('inpCrosshairPreset')) $('inpCrosshairPreset').value = linkedCrosshair;
+
+      const presetContent = BlkParser.serialize(d, {
+        forceFormat: 'hud_preset',
+        linkedReticleName: linkedCrosshair
+      });
+
+      state.sightsCatalog[names.reticleFile] = reticleContent;
+      rebuildPresetsDropdown(true);
+
+      downloadTextFile(names.reticleFile, reticleContent);
+      setTimeout(() => {
+        downloadTextFile(names.presetFile, presetContent);
+      }, 140);
+
+      showToast(
+        `Exported ${names.reticleFile} (→ UserSights/all_tanks) & ${names.presetFile} (→ UserSights/tank_sight_presets)`
+      );
+      return;
+    }
+
+    const isPresetOnly = mode === 'hud_preset';
+    const outName = isPresetOnly ? names.presetFile : names.reticleFile;
+    const content = BlkParser.serialize(d, {
+      forceFormat: isPresetOnly ? 'hud_preset' : 'sight',
       excludeBaseLayer: !state.options.exportBase
     });
-    const rawOutName = state.fileName.endsWith('.blk') ? state.fileName : `${state.fileName}.blk`;
-    const outName = rawOutName.replace(/\s+/g, '_');
 
     if (typeof window.showSaveFilePicker === 'function') {
       try {
@@ -8289,13 +8355,12 @@
         state.fileHandle = handle;
         state.fileName = handle.name;
         $('activeFileName').textContent = handle.name;
-        state.sightsCatalog[handle.name] = content;
-        rebuildPresetsDropdown(true);
-        if (/\s/.test(handle.name)) {
-          showToast(`Saved ${handle.name} (Warning: remove spaces from filename for War Thunder)`, 'warn');
-        } else {
-          showToast(`Saved ${handle.name} directly to disk`);
+        if (!isPresetOnly) {
+          state.sightsCatalog[handle.name] = content;
+          rebuildPresetsDropdown(true);
         }
+        const folderHint = isPresetOnly ? 'UserSights/tank_sight_presets/' : 'UserSights/all_tanks/ or <tank-ID>/';
+        showToast(`Saved ${handle.name} (Place in ${folderHint})`);
         return;
       } catch (err) {
         if (err && err.name === 'AbortError') return;
@@ -8303,7 +8368,8 @@
     }
 
     downloadTextFile(outName, content);
-    showToast(`Downloaded ${outName}`);
+    const folderHint = isPresetOnly ? 'UserSights/tank_sight_presets/' : 'UserSights/all_tanks/ or <tank-ID>/';
+    showToast(`Downloaded ${outName} (Place in ${folderHint})`);
   }
 
   function downloadTextFile(filename, content) {
@@ -8425,8 +8491,13 @@
     const fill = $('limitMeterFill');
     fill.style.width = `${pct}%`;
     fill.classList.toggle('danger', totalPrimitives > WT_RECOMMENDED_LIMIT);
+    const hasBoth = docHasActiveHudSettings(d) && totalPrimitives > 0;
+    if (hasBoth && d.docType === 'hud_preset') {
+      d.docType = 'both';
+      if ($('selDocType')) $('selDocType').value = 'both';
+    }
     if ($('hudVectorExportHint')) {
-      $('hudVectorExportHint').hidden = !(d.docType === 'hud_preset' && totalPrimitives > 0);
+      $('hudVectorExportHint').hidden = !hasBoth;
     }
     updateMotionLegend();
   }
@@ -9460,15 +9531,33 @@
     }
 
     // Raw .blk Modal
-    $('btnViewCode').addEventListener('click', () => {
+    function refreshRawCodeModal() {
+      const targetFmt = $('selRawModalTarget')?.value || 'sight';
+      const names = getExportFileNames(state.fileName);
+      const totalPrimitives = state.doc.lines.length + state.doc.quads.length + state.doc.circles.length + state.doc.texts.length;
+      const linkedCrosshair = totalPrimitives > 0 ? names.reticleStem : (state.doc.header.crosshairPreset || names.reticleStem);
       const text = BlkParser.serialize(state.doc, {
+        forceFormat: targetFmt === 'hud_preset' ? 'hud_preset' : 'sight',
+        linkedReticleName: targetFmt === 'hud_preset' ? linkedCrosshair : undefined,
         excludeBaseLayer: !state.options.exportBase
       });
       $('rawBlkTextarea').value = text;
       const lineCount = text.split('\n').length;
-      $('codeStats').textContent = `${lineCount} lines • ${(text.length / 1024).toFixed(1)} KB`;
+      const fileLabel = targetFmt === 'hud_preset'
+        ? `${names.presetFile} (→ tank_sight_presets)`
+        : `${names.reticleFile} (→ all_tanks / <tank-ID>)`;
+      $('codeStats').textContent = `${fileLabel} • ${lineCount} lines • ${(text.length / 1024).toFixed(1)} KB`;
+    }
+
+    $('btnViewCode').addEventListener('click', () => {
+      const totalPrimitives = state.doc.lines.length + state.doc.quads.length + state.doc.circles.length + state.doc.texts.length;
+      if ($('selRawModalTarget')) {
+        $('selRawModalTarget').value = (state.doc.docType === 'hud_preset' && totalPrimitives === 0) ? 'hud_preset' : 'sight';
+      }
+      refreshRawCodeModal();
       $('codeModal').hidden = false;
     });
+    $('selRawModalTarget')?.addEventListener('change', refreshRawCodeModal);
     $('btnCloseModal').addEventListener('click', () => { $('codeModal').hidden = true; });
     $('codeModal').addEventListener('click', (e) => {
       if (e.target === $('codeModal')) $('codeModal').hidden = true;
@@ -9484,10 +9573,14 @@
       }
     });
     $('btnModalDownload').addEventListener('click', () => {
-      const rawOutName = state.fileName.endsWith('.blk') ? state.fileName : `${state.fileName}.blk`;
-      const outName = rawOutName.replace(/\s+/g, '_');
+      const targetFmt = $('selRawModalTarget')?.value || 'sight';
+      const names = getExportFileNames(state.fileName);
+      const outName = targetFmt === 'hud_preset' ? names.presetFile : names.reticleFile;
       downloadTextFile(outName, $('rawBlkTextarea').value);
       showToast(`Downloaded ${outName}`);
+    });
+    $('btnModalDownloadBoth')?.addEventListener('click', () => {
+      saveBlkFile('both');
     });
     $('btnApplyRawBlk').addEventListener('click', () => {
       loadBlkDocument($('rawBlkTextarea').value, state.fileName, false);
@@ -10357,10 +10450,15 @@
     }
 
     const statusEl = $('hudBackdropStatus');
-    if (state.doc.docType !== 'hud_preset') {
+    const ownPrimitives = state.doc.lines.length + state.doc.quads.length + state.doc.circles.length + state.doc.texts.length;
+    if ((state.doc.docType !== 'hud_preset' && state.doc.docType !== 'both') || ownPrimitives > 0) {
       state.hudBackdrop.doc = null;
       state.hudBackdrop.key = '';
-      if (statusEl) statusEl.textContent = 'Backdrop preview active in HUD Preset mode';
+      if (statusEl) {
+        statusEl.textContent = ownPrimitives > 0
+          ? `Canvas Reticle active (${ownPrimitives} primitives → _reticle.blk)`
+          : 'Backdrop preview active in HUD Preset mode';
+      }
       return;
     }
 
@@ -10422,19 +10520,23 @@
     const doc = state.doc;
     const h = doc.header;
     const widgets = ensureHudWidgetsOnDoc();
-    const isHud = doc.docType === 'hud_preset';
     const includedCount = BlkParser.HUD_WIDGET_ORDER.filter((k) => widgets[k]?.included).length;
+    const totalPrimitives = doc.lines.length + doc.quads.length + doc.circles.length + doc.texts.length;
+    const hasBoth = (includedCount > 0 || !!h.reticle?.included) && totalPrimitives > 0;
+    if (hasBoth && doc.docType === 'hud_preset') {
+      doc.docType = 'both';
+    }
+    const modeVal = doc.docType === 'both' ? 'both' : (doc.docType === 'hud_preset' ? 'hud_preset' : 'sight');
 
-    if ($('selDocType')) $('selDocType').value = isHud ? 'hud_preset' : 'sight';
+    if ($('selDocType')) $('selDocType').value = modeVal;
     if ($('hudPresetStatusBadge')) {
       const b = $('hudPresetStatusBadge');
-      b.textContent = isHud ? 'HUD PRESET' : (includedCount > 0 ? `${includedCount} HUD` : 'CLASSIC');
-      b.classList.toggle('active', isHud || includedCount > 0);
+      b.textContent = modeVal === 'both' ? 'RETICLE + HUD' : (modeVal === 'hud_preset' ? 'HUD PRESET' : (includedCount > 0 ? `${includedCount} HUD` : 'RETICLE'));
+      b.classList.toggle('active', modeVal !== 'sight' || includedCount > 0);
     }
 
-    const totalPrimitives = doc.lines.length + doc.quads.length + doc.circles.length + doc.texts.length;
     if ($('hudVectorExportHint')) {
-      $('hudVectorExportHint').hidden = !(isHud && totalPrimitives > 0);
+      $('hudVectorExportHint').hidden = !hasBoth;
     }
 
     if ($('inpCrosshairPreset')) $('inpCrosshairPreset').value = h.crosshairPreset ?? 'Default_Sight';
@@ -10524,10 +10626,13 @@
 
   function initHudPresetControls() {
     $('selDocType')?.addEventListener('change', (e) => {
-      const nextType = e.target.value === 'hud_preset' ? 'hud_preset' : 'sight';
+      const v = e.target.value;
+      const nextType = v === 'both' ? 'both' : (v === 'hud_preset' ? 'hud_preset' : 'sight');
       state.doc.docType = nextType;
-      if (nextType === 'hud_preset') {
-        if (!state.doc.header.crosshairPreset) state.doc.header.crosshairPreset = 'Default_Sight';
+      if (nextType === 'hud_preset' || nextType === 'both') {
+        if (!state.doc.header.crosshairPreset) {
+          state.doc.header.crosshairPreset = getExportFileNames(state.fileName).reticleStem;
+        }
         state.hudEditor.editOnCanvas = true;
         state.options.showHudOverlay = true;
       } else {
@@ -10537,17 +10642,20 @@
       syncHudPresetUIFromDoc();
       refreshHudBackdropDoc();
       requestRender();
-      showToast(nextType === 'hud_preset' ? 'Switched export format to HUD Preset (tank_sight_presets)' : 'Switched export format to Classic Custom Sight');
+      const msg = nextType === 'both'
+        ? 'Export Mode set to Both Files (_reticle.blk + _preset.blk)'
+        : (nextType === 'hud_preset' ? 'Export Mode set to HUD Preset Only (_preset.blk)' : 'Export Mode set to Reticle Only (_reticle.blk)');
+      showToast(msg);
     });
 
+    $('btnSaveBothBlk')?.addEventListener('click', () => saveBlkFile('both'));
+    $('btnSaveReticleOnly')?.addEventListener('click', () => saveBlkFile('sight'));
+    $('btnSavePresetOnly')?.addEventListener('click', () => saveBlkFile('hud_preset'));
+
     $('btnConvertToClassicSight')?.addEventListener('click', () => {
-      state.doc.docType = 'sight';
-      state.hudEditor.editOnCanvas = false;
-      pushHistory();
-      syncHudPresetUIFromDoc();
-      refreshHudBackdropDoc();
-      requestRender();
-      showToast('Switched document to Classic Custom Sight format');
+      state.doc.docType = 'both';
+      if ($('selDocType')) $('selDocType').value = 'both';
+      saveBlkFile('both');
     });
 
     $('btnBuildHudPreset')?.addEventListener('click', () => {
