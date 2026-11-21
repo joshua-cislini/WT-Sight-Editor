@@ -8,6 +8,11 @@
   const BASE_SCALE = 700;
   const MAX_HISTORY = 50;
   const WT_RECOMMENDED_LIMIT = 8000;
+  const MOTION_COLORS = {
+    static: '#cbd5e1',
+    vertical: '#38bdf8',
+    radial: '#e879f9'
+  };
 
   // =========================================================================
   // Application State
@@ -20,7 +25,7 @@
     lastPresetsStamp: window.WT_PRESETS_STAMP || 0,
 
     doc: BlkParser.createEmptyDoc(),
-    previewMode: 'day', // 'day' | 'light' | 'thermal' | 'nvg' | 'blueprint'
+    previewMode: 'day', // 'day' | 'light' | 'thermal' | 'nvg' | 'blueprint' | 'motion'
     tool: 'select',
     spacePanning: false,
 
@@ -43,6 +48,8 @@
       showGrid: true,
       showTicks: true,
       colorLayers: false,
+      colorMotion: false,
+      showHudOverlay: true,
       exportBase: true,
       overlayMode: 'append', // 'append' | 'replace'
       gridStep: 0.025,
@@ -120,6 +127,26 @@
       playDir: 1,
       pauseUntil: 0,
       lastTs: 0
+    },
+    hudEditor: {
+      editOnCanvas: false,
+      selectedWidget: 'rangefinder',
+      colorMode: 'day',
+      snapGuides: [],
+      widgetScreenBoxes: {}
+    },
+    hudBackdrop: {
+      key: '',
+      customName: '',
+      customText: '',
+      doc: null,
+      source: 'builtin'
+    },
+    hudSim: {
+      active: false,
+      startTs: 0,
+      rfDuration: 2.2,
+      reloadDuration: 5.0
     }
   };
 
@@ -414,9 +441,29 @@
     };
   }
 
+  function cloneHudWidget(w) {
+    if (!w) return null;
+    const out = { ...w };
+    if (Array.isArray(w.position)) out.position = [...w.position];
+    for (const k of ['textColor', 'bgColor', 'nightVisionTextColor', 'nightVisionBgColor', 'lightTextColor', 'lightBgColor', 'thermalTextColor', 'thermalBgColor', 'progressColor', 'progressBackgroundColor', 'color', 'lightColor', 'nvColor', 'thermalColor']) {
+      if (w[k] && typeof w[k] === 'object') out[k] = { ...w[k] };
+    }
+    return out;
+  }
+
+  function cloneHudWidgetsMap(hw) {
+    const base = BlkParser.createDefaultHudWidgets();
+    const out = {};
+    for (const key of BlkParser.HUD_WIDGET_ORDER) {
+      out[key] = cloneHudWidget((hw && hw[key]) ? hw[key] : base[key]);
+    }
+    return out;
+  }
+
   function cloneDocDrawState(doc) {
     const h = doc.header || {};
     return {
+      docType: doc.docType || 'sight',
       lines: doc.lines.map((l) => cloneItemArrayProps(l)),
       quads: doc.quads.map((q) => ({
         ...cloneItemArrayProps(q),
@@ -429,10 +476,14 @@
       texts: doc.texts.map((t) => cloneItemArrayProps(t)),
       distances: (doc.distances || []).map((d) => ({ ...d })),
       ballistics: (doc.ballistics || []).map(cloneBulletItem),
+      hudWidgets: cloneHudWidgetsMap(doc.hudWidgets),
       header: {
         ...h,
         crosshairColor: { ...h.crosshairColor },
         crosshairLightColor: { ...h.crosshairLightColor },
+        crosshairNvColor: { ...(h.crosshairNvColor || { r: 110, g: 255, b: 145, a: 255 }) },
+        crosshairThermalColor: { ...(h.crosshairThermalColor || { r: 242, g: 248, b: 255, a: 255 }) },
+        reticle: { ...(h.reticle || { included: false, overridden: false, lineWidth: 0, fontSize: 0.7 }) },
         crosshairHorVertSize: [...(h.crosshairHorVertSize || [3, 2])],
         crosshairDistHorSizeMain: [...(h.crosshairDistHorSizeMain || [0.03, 0.02])],
         crosshairDistHorSizeAdditional: [...(h.crosshairDistHorSizeAdditional || [0.005, 0.003])],
@@ -475,12 +526,14 @@
 
   function restoreSnapshot(snap) {
     const cloned = cloneDocDrawState(snap);
+    state.doc.docType = cloned.docType || 'sight';
     state.doc.lines = cloned.lines;
     state.doc.quads = cloned.quads;
     state.doc.circles = cloned.circles;
     state.doc.texts = cloned.texts;
     state.doc.distances = cloned.distances;
     state.doc.ballistics = cloned.ballistics;
+    state.doc.hudWidgets = cloned.hudWidgets;
     state.doc.header = cloned.header;
     state.doc.modifiedHeaderKeys = cloned.modifiedHeaderKeys;
     const validIds = new Set(allShapes().map((s) => s.item.id));
@@ -489,6 +542,8 @@
     }
     syncHeaderUIFromDoc();
     syncRadialPanelUIFromDoc();
+    if (typeof syncHudPresetUIFromDoc === 'function') syncHudPresetUIFromDoc();
+    if (typeof refreshHudBackdropDoc === 'function') refreshHudBackdropDoc();
     syncPreviewShellOptions();
     updateSelectionUI();
     updateStatsUI();
@@ -758,9 +813,52 @@
     };
   }
 
+  function isMotionColorActive() {
+    return state.previewMode === 'motion' || !!state.options.colorMotion;
+  }
+
+  function getElementMotionType(item) {
+    if (item.moveRadial) return 'radial';
+    if (item.move) return 'vertical';
+    return 'static';
+  }
+
+  function updateMotionLegend() {
+    const legend = $('motionLegend');
+    if (!legend) return;
+    const active = isMotionColorActive();
+    legend.hidden = !active;
+    if (!active) return;
+
+    let staticCnt = 0;
+    let vertCnt = 0;
+    let radialCnt = 0;
+    for (const { item } of allShapes()) {
+      if (!isLayerVisible(item.layer)) continue;
+      const m = getElementMotionType(item);
+      if (m === 'radial') radialCnt++;
+      else if (m === 'vertical') vertCnt++;
+      else staticCnt++;
+    }
+
+    const h = state.doc?.header;
+    if (h?.radial && state.doc.distances?.length) {
+      radialCnt += state.doc.distances.length;
+    }
+    for (const b of (state.doc?.ballistics || [])) {
+      const cnt = b.distances?.length || 0;
+      if (b.radial) radialCnt += cnt;
+      else vertCnt += cnt;
+    }
+
+    if ($('cntMotionStatic')) $('cntMotionStatic').textContent = String(staticCnt);
+    if ($('cntMotionVert')) $('cntMotionVert').textContent = String(vertCnt);
+    if ($('cntMotionRadial')) $('cntMotionRadial').textContent = String(radialCnt);
+  }
+
   function addLineSymmetric(x1, y1, x2, y2, layer = 'draw') {
     const th = state.options.defaultThousandth;
-    const mv = state.options.defaultMove;
+    const mv = state.options.defaultMoveRadial ? false : state.options.defaultMove;
     for (const { sx, sy } of getMirrorTransforms()) {
       const rx1 = x1 * sx, ry1 = y1 * sy;
       const rx2 = x2 * sx, ry2 = y2 * sy;
@@ -780,7 +878,7 @@
 
   function addQuadSymmetric(tl, tr, br, bl, layer = 'draw') {
     const th = state.options.defaultThousandth;
-    const mv = state.options.defaultMove;
+    const mv = state.options.defaultMoveRadial ? false : state.options.defaultMove;
     for (const { sx, sy } of getMirrorTransforms()) {
       const cx = (tl.x + tr.x + br.x + bl.x) * 0.25 * sx;
       const cy = (tl.y + tr.y + br.y + bl.y) * 0.25 * sy;
@@ -876,7 +974,7 @@
     const aStart = state.options.arcStart || 0;
     const aEnd = state.options.arcEnd ?? 360;
     const th = state.options.defaultThousandth;
-    const mv = state.options.defaultMove;
+    const mv = state.options.defaultMoveRadial ? false : state.options.defaultMove;
 
     if (mode === 'nativeCircle') {
       for (const { sx, sy } of getMirrorTransforms()) {
@@ -1900,7 +1998,11 @@
     if (shapes.length === 0) {
       state.cam.x = 0;
       state.cam.y = 0;
-      state.cam.scale = Math.min(canvasW, canvasH) * 0.85;
+      if (state.doc?.docType === 'hud_preset') {
+        state.cam.scale = Math.max(80, Math.min(canvasW / (16 / 9), canvasH) * 0.90);
+      } else {
+        state.cam.scale = Math.min(canvasW, canvasH) * 0.85;
+      }
       updateZoomUI();
       requestRender();
       return;
@@ -1956,7 +2058,7 @@
   function getThemeColors() {
     const h = state.doc.header;
     const mode = state.previewMode;
-    if (mode === 'blueprint') {
+    if (mode === 'blueprint' || mode === 'motion') {
       return {
         bgOuter: '#090d14',
         bgScope: '#0e1520',
@@ -1983,27 +2085,35 @@
       };
     }
     if (mode === 'thermal') {
+      const c = h.crosshairThermalColor;
+      const hasC = c && Number.isFinite(c.r) && c.a > 15;
+      const stroke = hasC ? `rgba(${c.r},${c.g},${c.b},${c.a / 255})` : 'rgba(242, 248, 255, 0.96)';
+      const lum = hasC ? (c.r + c.g + c.b) : 745;
       return {
         bgOuter: '#050608',
-        bgScope: '#22262b',
-        bgScopeEdge: '#121519',
-        reticle: 'rgba(242, 248, 255, 0.96)',
-        glow: 'rgba(200, 230, 255, 0.35)',
+        bgScope: '#3a414a',
+        bgScopeEdge: '#20252b',
+        reticle: stroke,
+        glow: lum > 60 ? `rgba(${hasC ? c.r : 200},${hasC ? c.g : 230},${hasC ? c.b : 255},0.35)` : null,
         grid: 'rgba(255, 255, 255, 0.06)',
         axis: 'rgba(220, 240, 255, 0.25)',
-        crosshair: 'rgba(242, 248, 255, 0.9)'
+        crosshair: stroke
       };
     }
     if (mode === 'nvg') {
+      const c = h.crosshairNvColor;
+      const hasC = c && Number.isFinite(c.r) && c.a > 15;
+      const stroke = hasC ? `rgba(${c.r},${c.g},${c.b},${c.a / 255})` : 'rgba(110, 255, 145, 0.95)';
+      const lum = hasC ? (c.r + c.g + c.b) : 510;
       return {
         bgOuter: '#030804',
-        bgScope: '#0b2411',
-        bgScopeEdge: '#041207',
-        reticle: 'rgba(110, 255, 145, 0.95)',
-        glow: 'rgba(74, 222, 128, 0.5)',
+        bgScope: '#11381b',
+        bgScopeEdge: '#071a0c',
+        reticle: stroke,
+        glow: lum > 60 ? `rgba(${hasC ? c.r : 74},${hasC ? c.g : 222},${hasC ? c.b : 128},0.48)` : null,
         grid: 'rgba(74, 222, 128, 0.07)',
         axis: 'rgba(74, 222, 128, 0.25)',
-        crosshair: 'rgba(110, 255, 145, 0.9)'
+        crosshair: stroke
       };
     }
     // Day mode
@@ -2139,11 +2249,16 @@
     }
     drawSymmetryGuides();
 
-    // 4. Built-in War Thunder Central Lines & Range Ticks
-    drawCentralSightOverlay(theme);
+    // 4. Built-in War Thunder Central Lines, Range Ticks & HUD Preset Backdrop
+    if (state.doc.docType === 'hud_preset') {
+      renderHudBackdrop(theme);
+    } else {
+      drawCentralSightOverlay(theme);
+    }
 
     // 5. Batched Render of Vector Elements (Quads -> Lines -> Circles -> Texts)
-    const baseLineWidth = Math.max(1.1, (state.doc.header.lineSizeMult || 1) * 1.4);
+    const baseLineWidth = getEffectiveLineWidth(state.doc.header);
+    const effFontMult = getEffectiveFontMult(state.doc.header);
     const totalCount = state.doc.lines.length + state.doc.quads.length;
 
     if (theme.glow && totalCount < 6000) {
@@ -2153,14 +2268,21 @@
       ctx.shadowBlur = 0;
     }
 
-    const colorByLayer = state.options.colorLayers;
-    const layerStyle = (layer) => {
-      if (!colorByLayer) return theme.reticle;
-      return layer === 'base' ? '#38bdf8' : '#34d399';
+    const colorByMotion = isMotionColorActive();
+    const colorByLayer = !colorByMotion && state.options.colorLayers;
+    const groupColorStyle = (grp) => {
+      if (colorByMotion) return MOTION_COLORS[grp] || theme.reticle;
+      if (colorByLayer) return grp === 'base' ? '#38bdf8' : '#34d399';
+      return theme.reticle;
+    };
+    const itemColorStyle = (item) => {
+      if (colorByMotion) return MOTION_COLORS[getElementMotionType(item)];
+      if (colorByLayer) return item.layer === 'base' ? '#38bdf8' : '#34d399';
+      return theme.reticle;
     };
 
     // --- Batch Quads (Zero object allocation fast path for static, radial-aware transform when needed) ---
-    const layerOrder = colorByLayer ? ['base', 'draw'] : ['all'];
+    const batchGroups = colorByMotion ? ['static', 'vertical', 'radial'] : (colorByLayer ? ['base', 'draw'] : ['all']);
     const selectedQuads = [];
     const halfCW = canvasW * 0.5;
     const halfCH = canvasH * 0.5;
@@ -2201,14 +2323,14 @@
       ctx.closePath();
     };
 
-    for (const grp of layerOrder) {
-      ctx.fillStyle = grp === 'all' ? theme.reticle : layerStyle(grp);
+    for (const grp of batchGroups) {
+      ctx.fillStyle = groupColorStyle(grp);
       ctx.beginPath();
       let hasAny = false;
       for (let i = 0, len = state.doc.quads.length; i < len; i++) {
         const q = state.doc.quads[i];
         if (!isLayerVisible(q.layer)) continue;
-        if (grp !== 'all' && q.layer !== grp) continue;
+        if (colorByMotion ? getElementMotionType(q) !== grp : (colorByLayer && q.layer !== grp)) continue;
         if (hasSel && state.selection.has(q.id)) selectedQuads.push(q);
         drawQuadPath(q, q.thousandth ? milScale : 1);
         hasAny = true;
@@ -2259,15 +2381,15 @@
       ctx.lineTo(halfCW + (x2 - camX) * camS, halfCH + (y2 - camY) * camS);
     };
 
-    for (const grp of layerOrder) {
-      ctx.strokeStyle = grp === 'all' ? theme.reticle : layerStyle(grp);
+    for (const grp of batchGroups) {
+      ctx.strokeStyle = groupColorStyle(grp);
       ctx.lineWidth = baseLineWidth;
       ctx.beginPath();
       let hasAny = false;
       for (let i = 0, len = state.doc.lines.length; i < len; i++) {
         const l = state.doc.lines[i];
         if (!isLayerVisible(l.layer)) continue;
-        if (grp !== 'all' && l.layer !== grp) continue;
+        if (colorByMotion ? getElementMotionType(l) !== grp : (colorByLayer && l.layer !== grp)) continue;
         if (hasSel && state.selection.has(l.id)) {
           selectedLines.push(l);
           continue;
@@ -2312,8 +2434,11 @@
       } else {
         ctx.arc(center.x, center.y, rPx, sRad, eRad);
       }
-      ctx.strokeStyle = isSel ? '#f59e0b' : layerStyle(c.layer);
-      ctx.lineWidth = Math.max(1, (c.size || 1.5) * (state.doc.header.lineSizeMult || 1));
+      ctx.strokeStyle = isSel ? '#f59e0b' : itemColorStyle(c);
+      const lineScaleFactor = (state.doc.header?.reticle?.included && state.doc.header?.reticle?.overridden)
+        ? Math.max(0.75, 0.8 + Math.max(0, state.doc.header.reticle.lineWidth || 0) * 0.9)
+        : (state.doc.header.lineSizeMult || 1);
+      ctx.lineWidth = Math.max(1, (c.size || 1.5) * lineScaleFactor);
       ctx.stroke();
     }
 
@@ -2330,22 +2455,25 @@
       }
       wy += xf.shiftY;
       const pos = worldToScreen(wx, wy);
-      const fontPx = Math.max(9, 13 * (t.size || 1) * (state.doc.header.fontSizeMult || 1) * (state.cam.scale / BASE_SCALE));
+      const fontPx = Math.max(9, 13 * (t.size || 1) * effFontMult * (state.cam.scale / BASE_SCALE));
       const isSel = state.selection.has(t.id);
 
       ctx.font = `600 ${fontPx}px "Segoe UI", sans-serif`;
       ctx.textBaseline = 'middle';
       ctx.textAlign = t.align === 1 ? 'left' : t.align === -1 ? 'right' : 'center';
-      ctx.fillStyle = isSel ? '#f59e0b' : layerStyle(t.layer);
+      ctx.fillStyle = isSel ? '#f59e0b' : itemColorStyle(t);
       ctx.fillText(t.text || '', pos.x, pos.y);
     }
 
     ctx.shadowBlur = 0;
 
-    // 6. Selection Bounding Box & Handles
+    // 6. Tank Sight HUD Widgets Overlay (rangefinder, turret, fov, gunReady, bulletType)
+    renderHudWidgetsOverlay(theme);
+
+    // 7. Selection Bounding Box & Handles
     renderSelectionOverlay();
 
-    // 7. Live Tool Preview & Cursor Guides
+    // 8. Live Tool Preview & Cursor Guides
     renderToolPreview();
 
     ctx.restore();
@@ -2408,14 +2536,32 @@
     ctx.restore();
   }
 
-  function drawSingleBallisticScale(cfg, theme, activeMilScale, previewGunDropMrad, isMainScale = false) {
-    const h = state.doc.header;
+  function getEffectiveLineWidth(header = state.doc.header) {
+    const r = header?.reticle;
+    if (r && r.included && r.overridden) {
+      return Math.max(1.0, 1.15 + Math.max(0, r.lineWidth || 0) * 1.4);
+    }
+    return Math.max(1.1, (header?.lineSizeMult || 1) * 1.4);
+  }
+
+  function getEffectiveFontMult(header = state.doc.header) {
+    const r = header?.reticle;
+    if (r && r.included && r.overridden) {
+      return Math.max(0.1, r.fontSize || 0.7);
+    }
+    return Math.max(0.1, header?.fontSizeMult || 1);
+  }
+
+  function drawSingleBallisticScale(cfg, theme, activeMilScale, previewGunDropMrad, isMainScale = false, docHeader = state.doc.header) {
+    const h = docHeader || state.doc.header;
     const distances = cfg.distances || [];
     if (distances.length === 0) return;
 
     const speed = cfg.speed || state.rangePreview.speed || 935;
     const dragK = inferDragK(cfg.bulletType, speed);
     const stretch = (cfg.radialStretch ?? 1) * (cfg.distanceStretch ?? 1);
+    const effFontMult = getEffectiveFontMult(state.doc.header);
+    const effLineW = getEffectiveLineWidth(state.doc.header);
 
     if (cfg.radial) {
       const rr = cfg.radialRadius || [70, 1];
@@ -2443,14 +2589,14 @@
       }
 
       const textOff = cfg.textPos || [0.015, 0];
-      const fontMult = cfg.fontSizeMult || h.fontSizeMult || 1;
+      const fontMult = cfg.fontSizeMult || effFontMult || 1;
       const fontPx = Math.max(8, 12.5 * fontMult * (state.cam.scale / BASE_SCALE));
-      const lineW = Math.max(1.1, (h.lineSizeMult || 1) * 1.4);
+      const radialColor = isMotionColorActive() ? MOTION_COLORS.radial : theme.reticle;
 
       ctx.save();
-      ctx.strokeStyle = theme.reticle;
-      ctx.fillStyle = theme.reticle;
-      ctx.lineWidth = lineW;
+      ctx.strokeStyle = radialColor;
+      ctx.fillStyle = radialColor;
+      ctx.lineWidth = effLineW;
       ctx.font = `600 ${fontPx}px "Segoe UI", sans-serif`;
       ctx.textBaseline = 'middle';
       ctx.textAlign = cfg.textAlign === 1 ? 'left' : cfg.textAlign === -1 ? 'right' : 'center';
@@ -2504,24 +2650,26 @@
 
     // Linear scale mode
     if (isMainScale && !state.options.showTicks) return;
-    const origin = worldToScreen(0, 0);
     const mainSize = ((cfg.crosshairDistHorSizeMain?.[0] || h.crosshairDistHorSizeMain?.[0] || 0.03)) * state.cam.scale;
     const addSize = ((cfg.crosshairDistHorSizeAdditional?.[0] || h.crosshairDistHorSizeAdditional?.[0] || 0.005)) * state.cam.scale;
     const signY = h.applyCorrectionToGun === false ? 1 : -1;
     const gunShiftCanvas = previewGunDropMrad * activeMilScale * signY;
     const dStretch = cfg.distanceStretch ?? 1;
+    const distScaleOffsetX = ((state.doc.header?.shotDistScaleOffset || 0) * 0.002);
+    const linearColor = isMotionColorActive() ? MOTION_COLORS.vertical : theme.crosshair;
 
     ctx.save();
-    ctx.strokeStyle = theme.crosshair;
-    ctx.fillStyle = theme.crosshair;
-    ctx.lineWidth = Math.max(1, (h.lineSizeMult || 1) * 1.1);
-    ctx.font = `600 10px "Segoe UI", sans-serif`;
+    ctx.strokeStyle = linearColor;
+    ctx.fillStyle = linearColor;
+    ctx.lineWidth = Math.max(1, effLineW * 0.85);
+    const linFontPx = Math.max(8, 10 * effFontMult * (state.cam.scale / BASE_SCALE));
+    ctx.font = `600 ${linFontPx}px "Segoe UI", sans-serif`;
     ctx.textBaseline = 'middle';
     ctx.textAlign = 'left';
 
     for (const d of distances) {
       const dropY = (computeBallisticDropMrad(d.dist, speed, dragK) * activeMilScale * dStretch) + gunShiftCanvas;
-      const p = worldToScreen(cfg.distancePos?.[0] || 0, dropY + (cfg.distancePos?.[1] || 0));
+      const p = worldToScreen((cfg.distancePos?.[0] || 0) + distScaleOffsetX, dropY + (cfg.distancePos?.[1] || 0));
       const w = d.major > 0 ? mainSize : addSize;
       if (w > 0.5) {
         ctx.beginPath();
@@ -2555,7 +2703,7 @@
       if (h.drawDistanceCorrection) {
         const dcp = h.distanceCorrectionPos || [-0.26, -0.05];
         const pos = worldToScreen(dcp[0], dcp[1]);
-        const fontPx = Math.max(10, 13 * (h.fontSizeMult || 1) * (state.cam.scale / BASE_SCALE));
+        const fontPx = Math.max(10, 13 * getEffectiveFontMult(h) * (state.cam.scale / BASE_SCALE));
         ctx.save();
         ctx.font = `600 ${fontPx}px "Segoe UI", sans-serif`;
         ctx.fillStyle = theme.reticle;
@@ -2614,10 +2762,659 @@
     const maskR = 0.6 * state.cam.scale;
 
     if (!(state.doc.hasSynthesizedStatic && isLayerVisible('base'))) {
+      const staticColor = isMotionColorActive() ? MOTION_COLORS.static : theme.crosshair;
       ctx.save();
-      ctx.strokeStyle = theme.crosshair;
-      ctx.fillStyle = theme.crosshair;
-      ctx.lineWidth = Math.max(1, (h.lineSizeMult || 1) * 1.1);
+      ctx.strokeStyle = staticColor;
+      ctx.fillStyle = staticColor;
+      ctx.lineWidth = Math.max(1, getEffectiveLineWidth(h) * 0.85);
+
+      if (h.drawCentralLineVert) {
+        ctx.beginPath();
+        ctx.moveTo(origin.x, origin.y - maskR);
+        ctx.lineTo(origin.x, origin.y + maskR);
+        ctx.stroke();
+      }
+      if (h.drawCentralLineHorz) {
+        ctx.beginPath();
+        ctx.moveTo(origin.x - maskR, origin.y);
+        ctx.lineTo(origin.x + maskR, origin.y);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    drawBallisticScales(theme);
+  }
+
+  // =========================================================================
+  // Tank Sight HUD Preset Backdrop & Live 1920x1080 Widget Overlay
+  // =========================================================================
+  function hudToWorld(hx, hy) {
+    return {
+      x: ((hx ?? 960) - 960) / 1080,
+      y: ((hy ?? 540) - 540) / 1080
+    };
+  }
+
+  function worldToHud(wx, wy) {
+    return {
+      x: 960 + wx * 1080,
+      y: 540 + wy * 1080
+    };
+  }
+
+  function rgbaToCss(c, fallback = 'rgba(0, 255, 60, 1)') {
+    if (!c || typeof c !== 'object') return fallback;
+    const r = Math.max(0, Math.min(255, Math.round(c.r ?? 0)));
+    const g = Math.max(0, Math.min(255, Math.round(c.g ?? 0)));
+    const b = Math.max(0, Math.min(255, Math.round(c.b ?? 0)));
+    const a = Math.max(0, Math.min(255, Math.round(c.a ?? 255))) / 255;
+    return `rgba(${r}, ${g}, ${b}, ${a})`;
+  }
+
+  function getHudColorKeyMap(widgetName, colorMode) {
+    const mode = (colorMode === 'light' || colorMode === 'nvg' || colorMode === 'thermal') ? colorMode : 'day';
+    const isTextBg = widgetName === 'rangefinder' || widgetName === 'bulletType';
+    if (isTextBg) {
+      if (mode === 'light') return { fg: 'lightTextColor', bg: 'lightBgColor' };
+      if (mode === 'nvg') return { fg: 'nightVisionTextColor', bg: 'nightVisionBgColor' };
+      if (mode === 'thermal') return { fg: 'thermalTextColor', bg: 'thermalBgColor' };
+      return { fg: 'textColor', bg: 'bgColor' };
+    }
+    if (mode === 'light') return { fg: 'lightColor', bg: null };
+    if (mode === 'nvg') return { fg: 'nvColor', bg: null };
+    if (mode === 'thermal') return { fg: 'thermalColor', bg: null };
+    return { fg: 'color', bg: null };
+  }
+
+  function resolveHudWidgetColorsForRender(widgetName, w) {
+    const pMode = state.previewMode;
+    const mode = (pMode === 'light' || pMode === 'nvg' || pMode === 'thermal') ? pMode : 'day';
+    const keys = getHudColorKeyMap(widgetName, mode);
+    const fgObj = w[keys.fg] || { r: 0, g: 255, b: 60, a: 255 };
+    const bgObj = keys.bg ? (w[keys.bg] || { r: 0, g: 0, b: 0, a: 0 }) : { r: 0, g: 0, b: 0, a: 0 };
+
+    let fgCss = rgbaToCss(fgObj);
+    if (isMotionColorActive()) {
+      fgCss = MOTION_COLORS.static;
+    } else if (pMode === 'blueprint' && (fgObj.r + fgObj.g + fgObj.b) < 75 && fgObj.a > 100) {
+      fgCss = '#cbd5e1';
+    }
+    const bgCss = rgbaToCss(bgObj, 'rgba(0,0,0,0)');
+    return { fgCss, bgCss, fgAlpha: fgObj.a ?? 255, bgAlpha: bgObj.a ?? 0 };
+  }
+
+  function getShellDisplayLabel(isShort) {
+    const key = state.rangePreview.shellKey || 'auto';
+    if (key.startsWith('doc_bullet:')) {
+      const idx = parseInt(key.split(':')[1], 10);
+      const bt = state.doc.ballistics?.[idx]?.bulletType || 'apcbc_tank';
+      const lbt = bt.toLowerCase();
+      if (lbt.includes('apds_fs')) return isShort ? 'APFSDS' : 'DM53 (APFSDS)';
+      if (lbt.includes('apds')) return isShort ? 'APDS' : 'L28A1 (APDS)';
+      if (lbt.includes('apcr')) return isShort ? 'APCR' : 'PzGr 40/42 (APCR)';
+      if (lbt.includes('apcbc')) return isShort ? 'APCBC' : 'PzGr 39/42 (APCBC)';
+      if (lbt.includes('aphe')) return isShort ? 'APHE' : 'PzGr 39 (APHE)';
+      if (lbt.includes('heat')) return isShort ? 'HEATFS' : 'M456 (HEATFS)';
+      if (lbt.includes('he_')) return isShort ? 'HE' : 'Sprgr. 42 (HE)';
+      if (lbt.includes('smoke')) return isShort ? 'SMK' : 'NbGr. (Smoke)';
+      return isShort ? 'AP' : bt;
+    }
+    const map = {
+      panther_apcbc: isShort ? 'APCBC' : 'PzGr 39/42 (APCBC)',
+      tiger_aphe: isShort ? 'APHEBC' : 'PzGr 39 (APHEBC)',
+      he_700: isShort ? 'HE' : 'HE-Frag',
+      apcr_1120: isShort ? 'APCR' : 'PzGr 40 (APCR)',
+      apfsds_1650: isShort ? 'APFSDS' : 'DM53 (APFSDS)'
+    };
+    return map[key] || (isShort ? 'APFSDS' : 'M829A2 (APFSDS)');
+  }
+
+  function renderHudBackdrop(theme) {
+    const h = state.doc.header;
+    const bDoc = state.hudBackdrop.doc;
+    const effLineW = getEffectiveLineWidth(h);
+    const effFontMult = getEffectiveFontMult(h);
+    const staticColor = isMotionColorActive() ? MOTION_COLORS.static : theme.crosshair;
+    const reticleColor = isMotionColorActive() ? MOTION_COLORS.static : theme.reticle;
+    const dropMrad = getPreviewDropMrad();
+    const dropCanvas = getPreviewDropCanvas();
+    const distOffX = (h.shotDistScaleOffset || 0) * 0.002;
+    const signY = h.applyCorrectionToGun === false ? 1 : -1;
+    const gunShiftY = dropCanvas * signY;
+
+    ctx.save();
+    if (theme.glow) {
+      ctx.shadowColor = theme.glow;
+      ctx.shadowBlur = 7;
+    }
+
+    if (bDoc) {
+      const bh = bDoc.header || {};
+      const tMode = bh.thousandthMode || 'ussr';
+      const baseMil = tMode === 'nato' ? MIL_TO_UNIT * (6000 / 6400) : tMode === 'real' ? MIL_TO_UNIT * (6000 / 6283.1853) : MIL_TO_UNIT;
+      const bMilScale = baseMil * (state.rangePreview.active ? (state.rangePreview.zoomMult || 1) : 1);
+      const origin = worldToScreen(0, 0);
+      const maskR = 0.6 * state.cam.scale;
+
+      ctx.strokeStyle = staticColor;
+      ctx.fillStyle = staticColor;
+      ctx.lineWidth = Math.max(1, effLineW * 0.85);
+      if (bh.drawCentralLineVert) {
+        ctx.beginPath();
+        ctx.moveTo(origin.x, origin.y - maskR);
+        ctx.lineTo(origin.x, origin.y + maskR);
+        ctx.stroke();
+      }
+      if (bh.drawCentralLineHorz) {
+        ctx.beginPath();
+        ctx.moveTo(origin.x - maskR, origin.y);
+        ctx.lineTo(origin.x + maskR, origin.y);
+        ctx.stroke();
+      }
+
+      if (bDoc.distances && bDoc.distances.length > 0 && (bh.radial || state.options.showTicks)) {
+        drawSingleBallisticScale(bh, theme, bMilScale, dropMrad, true, bh);
+      }
+      if (bDoc.ballistics && bDoc.ballistics.length > 0) {
+        for (const b of bDoc.ballistics) {
+          drawSingleBallisticScale(b, theme, bMilScale, dropMrad, false, bh);
+        }
+      }
+
+      const itemStyle = (item) => (isMotionColorActive() ? MOTION_COLORS[getElementMotionType(item)] : reticleColor);
+
+      for (const q of bDoc.quads) {
+        const sc = q.thousandth ? bMilScale : 1;
+        const xf = getElementRadialTransform('quad', q, bMilScale, dropCanvas);
+        const pts = [q.tl, q.tr, q.br, q.bl];
+        ctx.fillStyle = itemStyle(q);
+        ctx.beginPath();
+        for (let k = 0; k < 4; k++) {
+          let px = pts[k].x * sc, py = pts[k].y * sc;
+          if (xf.totalRad) {
+            const r = rotatePointCCW(px, py, xf.rcx, xf.rcy, xf.totalRad);
+            px = r.x; py = r.y;
+          }
+          py += xf.shiftY;
+          const sp = worldToScreen(px, py);
+          if (k === 0) ctx.moveTo(sp.x, sp.y);
+          else ctx.lineTo(sp.x, sp.y);
+        }
+        ctx.closePath();
+        ctx.fill();
+      }
+
+      ctx.lineWidth = effLineW;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      for (const l of bDoc.lines) {
+        const sc = l.thousandth ? bMilScale : 1;
+        const xf = getElementRadialTransform('line', l, bMilScale, dropCanvas);
+        let x1 = l.x1 * sc, y1 = l.y1 * sc;
+        let x2 = l.x2 * sc, y2 = l.y2 * sc;
+        if (xf.totalRad) {
+          const p1 = rotatePointCCW(x1, y1, xf.rcx, xf.rcy, xf.totalRad);
+          const p2 = rotatePointCCW(x2, y2, xf.rcx, xf.rcy, xf.totalRad);
+          x1 = p1.x; y1 = p1.y;
+          x2 = p2.x; y2 = p2.y;
+        }
+        const sp1 = worldToScreen(x1, y1 + xf.shiftY);
+        const sp2 = worldToScreen(x2, y2 + xf.shiftY);
+        ctx.strokeStyle = itemStyle(l);
+        ctx.beginPath();
+        ctx.moveTo(sp1.x, sp1.y);
+        ctx.lineTo(sp2.x, sp2.y);
+        ctx.stroke();
+      }
+
+      for (const c of bDoc.circles) {
+        const th = !!c.thousandth;
+        const xf = getElementRadialTransform('circle', c, bMilScale, dropCanvas);
+        let wx = toCanvasUnit(c.x, th, bMilScale);
+        let wy = toCanvasUnit(c.y, th, bMilScale);
+        if (xf.totalRad) {
+          const p = rotatePointCCW(wx, wy, xf.rcx, xf.rcy, xf.totalRad);
+          wx = p.x; wy = p.y;
+        }
+        wy += xf.shiftY;
+        const center = worldToScreen(wx, wy);
+        const rPx = Math.max(0.5, toCanvasUnit(c.diameter / 2, th, bMilScale) * state.cam.scale);
+        const sRad = ((c.startAngle - 90) * Math.PI) / 180 - xf.totalRad;
+        const eRad = ((c.endAngle - 90) * Math.PI) / 180 - xf.totalRad;
+        ctx.beginPath();
+        if (Math.abs((c.endAngle - c.startAngle) % 360) < 0.01 && Math.abs(c.endAngle - c.startAngle) >= 359.9) {
+          ctx.arc(center.x, center.y, rPx, 0, Math.PI * 2);
+        } else {
+          ctx.arc(center.x, center.y, rPx, sRad, eRad);
+        }
+        ctx.strokeStyle = itemStyle(c);
+        ctx.lineWidth = Math.max(1, (c.size || 1.5) * Math.max(0.75, effLineW * 0.7));
+        ctx.stroke();
+      }
+
+      for (const t of bDoc.texts) {
+        const th = !!t.thousandth;
+        const xf = getElementRadialTransform('text', t, bMilScale, dropCanvas);
+        let wx = toCanvasUnit(t.x, th, bMilScale);
+        let wy = toCanvasUnit(t.y, th, bMilScale);
+        if (xf.totalRad) {
+          const p = rotatePointCCW(wx, wy, xf.rcx, xf.rcy, xf.totalRad);
+          wx = p.x; wy = p.y;
+        }
+        wy += xf.shiftY;
+        const pos = worldToScreen(wx, wy);
+        const fontPx = Math.max(9, 13 * (t.size || 1) * effFontMult * (state.cam.scale / BASE_SCALE));
+        ctx.font = `600 ${fontPx}px "Segoe UI", sans-serif`;
+        ctx.textBaseline = 'middle';
+        ctx.textAlign = t.align === 1 ? 'left' : t.align === -1 ? 'right' : 'center';
+        ctx.fillStyle = itemStyle(t);
+        ctx.fillText(t.text || '', pos.x, pos.y);
+      }
+
+      ctx.restore();
+      return;
+    }
+
+    // Built-in War Thunder reticle backdrop (Default_Sight / Standard / ariete)
+    const preset = (h.crosshairPreset || '').toLowerCase();
+    const zoomScale = state.rangePreview.active ? (state.rangePreview.zoomMult || 1) : 1;
+    const drawSeg = (x1, y1, x2, y2) => {
+      const a = worldToScreen(x1, y1);
+      const b = worldToScreen(x2, y2);
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+    };
+    const drawTxt = (txt, x, y, sizeMult = 0.65, align = 'center') => {
+      const sp = worldToScreen(x, y);
+      const fontPx = Math.max(8, 13 * sizeMult * effFontMult * (state.cam.scale / BASE_SCALE));
+      ctx.font = `600 ${fontPx}px "Segoe UI", sans-serif`;
+      ctx.textBaseline = 'middle';
+      ctx.textAlign = align;
+      ctx.fillText(txt, sp.x, sp.y);
+    };
+
+    ctx.strokeStyle = reticleColor;
+    ctx.fillStyle = reticleColor;
+    ctx.lineWidth = Math.max(1, effLineW * 0.85);
+
+    if (preset === 'ariete') {
+      drawSeg(-0.011 * zoomScale, 0.013 * zoomScale, 0, 0);
+      drawSeg(0, 0, 0.011 * zoomScale, 0.013 * zoomScale);
+      drawSeg(-0.007 * zoomScale, 0.022 * zoomScale, 0, 0.012 * zoomScale);
+      drawSeg(0, 0.012 * zoomScale, 0.007 * zoomScale, 0.022 * zoomScale);
+      const oc = worldToScreen(0, 0);
+      ctx.beginPath();
+      ctx.arc(oc.x, oc.y, Math.max(2, 0.018 * zoomScale * state.cam.scale), 0, Math.PI * 2);
+      ctx.stroke();
+
+      drawSeg(-0.38, 0, -0.024 * zoomScale, 0);
+      drawSeg(0.024 * zoomScale, 0, 0.38, 0);
+      drawSeg(0, -0.34, 0, -0.024 * zoomScale);
+      drawSeg(0, 0.032 * zoomScale, 0, 0.36);
+
+      for (let mil = 4; mil <= 32; mil += 4) {
+        const x = mil * 0.0095 * zoomScale;
+        const isMaj = mil % 8 === 0;
+        const th = (isMaj ? 0.015 : 0.008) * zoomScale;
+        drawSeg(-x, 0, -x, th);
+        drawSeg(x, 0, x, th);
+        if (isMaj) {
+          drawTxt(String(mil), -x, th + 0.016 * zoomScale, 0.65);
+          drawTxt(String(mil), x, th + 0.016 * zoomScale, 0.65);
+        }
+      }
+
+      ctx.strokeStyle = isMotionColorActive() ? MOTION_COLORS.vertical : reticleColor;
+      ctx.fillStyle = isMotionColorActive() ? MOTION_COLORS.vertical : reticleColor;
+      for (let hm = 4; hm <= 28; hm += 4) {
+        const y = (hm * 0.0115 + 0.015) * zoomScale + gunShiftY;
+        const isMaj = hm % 8 === 0 || hm === 4;
+        const w = (isMaj ? 0.018 : 0.01) * zoomScale;
+        drawSeg(distOffX - w, y, distOffX + w, y);
+        drawTxt(String(hm), distOffX - w - 0.01, y, 0.62, 'right');
+      }
+    } else {
+      // Standard War Thunder Tank Crosshair
+      drawSeg(-0.48, 0, -0.008, 0);
+      drawSeg(0.008, 0, 0.48, 0);
+      drawSeg(-0.004, 0, 0.004, 0);
+      drawSeg(0, -0.48, 0, -0.008);
+      drawSeg(0, 0.008, 0, 0.48);
+      drawSeg(0, -0.004, 0, 0.004);
+
+      for (let mil = 4; mil <= 32; mil += 4) {
+        const x = mil * 0.009 * zoomScale;
+        const isMaj = mil % 8 === 0;
+        const th = (isMaj ? 0.014 : 0.007) * zoomScale;
+        drawSeg(-x, -th * 0.3, -x, th);
+        drawSeg(x, -th * 0.3, x, th);
+        if (isMaj) {
+          drawTxt(String(mil), -x, th + 0.015 * zoomScale, 0.65);
+          drawTxt(String(mil), x, th + 0.015 * zoomScale, 0.65);
+        }
+      }
+
+      ctx.strokeStyle = isMotionColorActive() ? MOTION_COLORS.vertical : reticleColor;
+      ctx.fillStyle = isMotionColorActive() ? MOTION_COLORS.vertical : reticleColor;
+      const stdDists = [
+        { dist: 200, major: 0 }, { dist: 400, major: 4 }, { dist: 600, major: 0 }, { dist: 800, major: 8 },
+        { dist: 1000, major: 0 }, { dist: 1200, major: 12 }, { dist: 1400, major: 0 }, { dist: 1600, major: 16 },
+        { dist: 1800, major: 0 }, { dist: 2000, major: 20 }, { dist: 2400, major: 24 }, { dist: 2800, major: 28 }
+      ];
+      for (const d of stdDists) {
+        const y = ((d.dist / 2000) * 0.25) * zoomScale + gunShiftY;
+        const isMaj = d.major > 0;
+        const w = (isMaj ? 0.02 : 0.009) * zoomScale;
+        drawSeg(distOffX - w, y, distOffX + w, y);
+        if (isMaj) {
+          drawTxt(String(d.major), distOffX - w - 0.01, y, 0.62, 'right');
+        }
+      }
+    }
+
+    ctx.restore();
+  }
+
+  function renderHudWidgetsOverlay(theme) {
+    state.hudEditor.widgetScreenBoxes = {};
+    if (!state.options.showHudOverlay) return;
+
+    const widgets = state.doc.hudWidgets;
+    if (!widgets) return;
+
+    const hudPxScale = state.cam.scale / 1080;
+    const now = performance.now();
+    const simActive = state.hudSim.active;
+    const simElapsed = simActive ? (now - state.hudSim.startTs) / 1000 : 0;
+    const rfProg = simActive ? Math.min(1, simElapsed / state.hudSim.rfDuration) : 0;
+    const reloadRem = simActive ? Math.max(0, state.hudSim.reloadDuration - simElapsed) : 0;
+
+    ctx.save();
+    ctx.shadowBlur = 0;
+
+    // 1. FOV Brackets (zoom-responsive corner markers around center)
+    const fovW = widgets.fov;
+    if (fovW && fovW.included && fovW.visible) {
+      const { fgCss } = resolveHudWidgetColorsForRender('fov', fovW);
+      const zoom = state.rangePreview.active ? (state.rangePreview.zoomMult || 1) : 1;
+      const bx = 0.28 / Math.sqrt(zoom);
+      const by = 0.19 / Math.sqrt(zoom);
+      const bl = 0.028;
+      ctx.strokeStyle = fgCss;
+      ctx.lineWidth = Math.max(1.3, 1.8 * hudPxScale);
+      const corners = [
+        [-bx, -by, 1, 1],
+        [bx, -by, -1, 1],
+        [-bx, by, 1, -1],
+        [bx, by, -1, -1]
+      ];
+      ctx.beginPath();
+      for (const [cx, cy, sxDir, syDir] of corners) {
+        const p = worldToScreen(cx, cy);
+        const hEnd = worldToScreen(cx + bl * sxDir, cy);
+        const vEnd = worldToScreen(cx, cy + bl * syDir);
+        ctx.moveTo(hEnd.x, hEnd.y);
+        ctx.lineTo(p.x, p.y);
+        ctx.lineTo(vEnd.x, vEnd.y);
+      }
+      ctx.stroke();
+    }
+
+    // 2. Turret Orientation Silhouette Indicator
+    const turretW = widgets.turret;
+    if (turretW && turretW.included && turretW.visible) {
+      const pos = Array.isArray(turretW.position) ? turretW.position : [489.75, 726.75];
+      const wp = hudToWorld(pos[0], pos[1]);
+      const sp = worldToScreen(wp.x, wp.y);
+      const { fgCss } = resolveHudWidgetColorsForRender('turret', turretW);
+      const s = Math.max(0.35, hudPxScale);
+      const hullW = 28 * s;
+      const hullH = 44 * s;
+      const trackW = 5 * s;
+
+      ctx.strokeStyle = fgCss;
+      ctx.lineWidth = Math.max(1.2, 1.6 * s);
+      // Hull & Tracks
+      ctx.strokeRect(sp.x - hullW * 0.5, sp.y - hullH * 0.5, hullW, hullH);
+      ctx.strokeRect(sp.x - hullW * 0.5 - trackW, sp.y - hullH * 0.5, trackW, hullH);
+      ctx.strokeRect(sp.x + hullW * 0.5, sp.y - hullH * 0.5, trackW, hullH);
+      // Front hull chevron
+      ctx.beginPath();
+      ctx.moveTo(sp.x - hullW * 0.35, sp.y - hullH * 0.36);
+      ctx.lineTo(sp.x, sp.y - hullH * 0.48);
+      ctx.lineTo(sp.x + hullW * 0.35, sp.y - hullH * 0.36);
+      // Turret ring & barrel
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(sp.x, sp.y + 3 * s, 10 * s, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(sp.x, sp.y - 7 * s);
+      ctx.lineTo(sp.x, sp.y - hullH * 0.5 - 16 * s);
+      ctx.stroke();
+
+      state.hudEditor.widgetScreenBoxes.turret = {
+        x: sp.x - hullW * 0.5 - trackW - 4,
+        y: sp.y - hullH * 0.5 - 18 * s,
+        w: hullW + trackW * 2 + 8,
+        h: hullH + 22 * s,
+        cx: sp.x,
+        cy: sp.y
+      };
+    }
+
+    // 3. Rangefinder Readout + Progress Bar
+    const rfW = widgets.rangefinder;
+    if (rfW && rfW.included && rfW.visible) {
+      const pos = Array.isArray(rfW.position) ? rfW.position : [1024.5, 549.75];
+      const wp = hudToWorld(pos[0], pos[1]);
+      const sp = worldToScreen(wp.x, wp.y);
+      const { fgCss, bgCss, bgAlpha } = resolveHudWidgetColorsForRender('rangefinder', rfW);
+      const fontPx = Math.max(9, (rfW.textSize || 20) * hudPxScale);
+      const fontFamily = rfW.font && rfW.font !== 'hud' ? rfW.font : '"Segoe UI", sans-serif';
+      ctx.font = `700 ${fontPx}px ${fontFamily}`;
+
+      const labelText = (simActive && rfProg < 1)
+        ? 'RANGING...'
+        : (state.rangePreview.active ? `${Math.round(state.rangePreview.distance)} m` : '1250 m');
+
+      const tm = ctx.measureText(labelText);
+      const padX = Math.max(4, fontPx * 0.35);
+      const padY = Math.max(2, fontPx * 0.2);
+      const barH = Math.max(3, fontPx * 0.22);
+      const showBar = simActive || state.rangePreview.active || state.hudEditor.selectedWidget === 'rangefinder';
+      const boxW = Math.max(54 * hudPxScale, tm.width + padX * 2);
+      const boxH = fontPx + padY * 2 + (showBar ? barH + 3 : 0);
+      const boxX = sp.x - boxW * 0.5;
+      const boxY = sp.y - boxH * 0.5;
+
+      if (bgAlpha > 0) {
+        ctx.fillStyle = bgCss;
+        ctx.fillRect(boxX, boxY, boxW, boxH);
+      }
+
+      ctx.fillStyle = fgCss;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(labelText, sp.x, boxY + padY + fontPx * 0.52);
+
+      if (showBar) {
+        const bx = boxX + padX * 0.5;
+        const by = boxY + fontPx + padY + 2;
+        const bw = boxW - padX;
+        const pct = simActive ? rfProg : 0.68;
+        const pbg = rfW.progressBackgroundColor;
+        if (pbg && pbg.a > 0) {
+          ctx.fillStyle = rgbaToCss(pbg);
+          ctx.fillRect(bx, by, bw, barH);
+        } else {
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.14)';
+          ctx.fillRect(bx, by, bw, barH);
+        }
+        ctx.fillStyle = rgbaToCss(rfW.progressColor, 'rgba(255, 255, 0, 1)');
+        ctx.fillRect(bx, by, bw * pct, barH);
+      }
+
+      state.hudEditor.widgetScreenBoxes.rangefinder = { x: boxX, y: boxY, w: boxW, h: boxH, cx: sp.x, cy: sp.y };
+    }
+
+    // 4. GunReady Mark & Reload Countdown
+    const readyW = widgets.gunReady;
+    if (readyW && readyW.included && readyW.visible) {
+      const pos = Array.isArray(readyW.position) ? readyW.position : [831, 549.75];
+      const wp = hudToWorld(pos[0], pos[1]);
+      const sp = worldToScreen(wp.x, wp.y);
+      const { fgCss } = resolveHudWidgetColorsForRender('gunReady', readyW);
+      const isReloading = simActive && reloadRem > 0;
+      const drawColor = isReloading ? 'rgba(248, 113, 113, 0.96)' : fgCss;
+      const fontPx = Math.max(9, (readyW.textSize || 20) * hudPxScale);
+      const fontFamily = readyW.font && readyW.font !== 'hud' ? readyW.font : '"Segoe UI", sans-serif';
+      ctx.font = `700 ${fontPx}px ${fontFamily}`;
+
+      const showMark = readyW.gunReadyMarkVisible !== false;
+      const showCd = readyW.gunReadyReloadCountdownVisible !== false;
+      const cdText = showCd ? (isReloading ? `${reloadRem.toFixed(1)}s` : 'READY') : '';
+      const tmW = cdText ? ctx.measureText(cdText).width : 0;
+      const markSz = showMark ? Math.max(7, fontPx * 0.56) : 0;
+      const gap = (showMark && showCd) ? Math.max(4, fontPx * 0.3) : 0;
+      const contentW = Math.max(18, markSz + gap + tmW);
+      const boxW = contentW + 10;
+      const boxH = Math.max(18, fontPx + 6);
+      const boxX = sp.x - boxW * 0.5;
+      const boxY = sp.y - boxH * 0.5;
+
+      let curX = sp.x - contentW * 0.5;
+      if (showMark) {
+        ctx.strokeStyle = drawColor;
+        ctx.fillStyle = drawColor;
+        ctx.lineWidth = Math.max(1.2, fontPx * 0.09);
+        const mx = curX;
+        const my = sp.y - markSz * 0.5;
+        ctx.strokeRect(mx, my, markSz, markSz);
+        if (!isReloading) {
+          ctx.fillRect(mx + markSz * 0.25, my + markSz * 0.25, markSz * 0.5, markSz * 0.5);
+        }
+        curX += markSz + gap;
+      }
+      if (showCd && cdText) {
+        ctx.fillStyle = drawColor;
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(cdText, curX, sp.y + 0.5);
+      }
+
+      state.hudEditor.widgetScreenBoxes.gunReady = { x: boxX, y: boxY, w: boxW, h: boxH, cx: sp.x, cy: sp.y };
+    }
+
+    // 5. BulletType Readout
+    const btW = widgets.bulletType;
+    if (btW && btW.included && btW.visible) {
+      const pos = Array.isArray(btW.position) ? btW.position : [483.75, 273.75];
+      const wp = hudToWorld(pos[0], pos[1]);
+      const sp = worldToScreen(wp.x, wp.y);
+      const { fgCss, bgCss, bgAlpha } = resolveHudWidgetColorsForRender('bulletType', btW);
+      const fontPx = Math.max(10, (btW.textSize || 30) * hudPxScale);
+      const fontFamily = btW.font && btW.font !== 'hud' ? btW.font : '"Segoe UI", sans-serif';
+      ctx.font = `700 ${fontPx}px ${fontFamily}`;
+
+      const labelText = getShellDisplayLabel(!!btW.isShortName);
+      const tm = ctx.measureText(labelText);
+      const padX = Math.max(5, fontPx * 0.32);
+      const padY = Math.max(2, fontPx * 0.16);
+      const boxW = tm.width + padX * 2;
+      const boxH = fontPx + padY * 2;
+      const boxX = sp.x - boxW * 0.5;
+      const boxY = sp.y - boxH * 0.5;
+
+      if (bgAlpha > 0) {
+        ctx.fillStyle = bgCss;
+        ctx.fillRect(boxX, boxY, boxW, boxH);
+      }
+      ctx.fillStyle = fgCss;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(labelText, sp.x, sp.y + 0.5);
+
+      state.hudEditor.widgetScreenBoxes.bulletType = { x: boxX, y: boxY, w: boxW, h: boxH, cx: sp.x, cy: sp.y };
+    }
+
+    // 6. Direct-Drag Edit Outlines, Coordinates & Snap Alignment Guides
+    if (state.hudEditor.editOnCanvas) {
+      const selName = state.hudEditor.selectedWidget;
+      for (const [wName, box] of Object.entries(state.hudEditor.widgetScreenBoxes)) {
+        const isSel = wName === selName;
+        ctx.strokeStyle = isSel ? '#38bdf8' : 'rgba(148, 163, 184, 0.45)';
+        ctx.lineWidth = isSel ? 1.4 : 1;
+        ctx.setLineDash(isSel ? [4, 3] : [2, 3]);
+        ctx.strokeRect(box.x - 3, box.y - 3, box.w + 6, box.h + 6);
+        ctx.setLineDash([]);
+
+        if (isSel) {
+          const wObj = widgets[wName];
+          const p = wObj?.position || [960, 540];
+          const tag = `${wName} (${Math.round(p[0] * 100) / 100}, ${Math.round(p[1] * 100) / 100})`;
+          ctx.font = '600 10.5px "Segoe UI", sans-serif';
+          const tw = ctx.measureText(tag).width + 8;
+          ctx.fillStyle = 'rgba(13, 14, 17, 0.88)';
+          ctx.fillRect(box.x - 3, box.y - 20, tw, 15);
+          ctx.fillStyle = '#38bdf8';
+          ctx.textAlign = 'left';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(tag, box.x + 1, box.y - 12.5);
+        }
+      }
+
+      if (state.hudEditor.snapGuides && state.hudEditor.snapGuides.length > 0) {
+        ctx.strokeStyle = 'rgba(56, 189, 248, 0.78)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        for (const g of state.hudEditor.snapGuides) {
+          if (g.axis === 'x') {
+            const sx = worldToScreen(hudToWorld(g.val, 540).x, 0).x;
+            ctx.moveTo(sx, 0);
+            ctx.lineTo(sx, canvasH);
+          } else {
+            const sy = worldToScreen(0, hudToWorld(960, g.val).y).y;
+            ctx.moveTo(0, sy);
+            ctx.lineTo(canvasW, sy);
+          }
+        }
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+
+    ctx.restore();
+  }
+
+  function hitTestHudWidgetScreen(sx, sy) {
+    if (!state.options.showHudOverlay || !state.hudEditor.editOnCanvas) return null;
+    const order = ['bulletType', 'gunReady', 'rangefinder', 'turret'];
+    for (const name of order) {
+      const box = state.hudEditor.widgetScreenBoxes[name];
+      if (!box) continue;
+      if (sx >= box.x - 4 && sx <= box.x + box.w + 4 && sy >= box.y - 4 && sy <= box.y + box.h + 4) {
+        return name;
+      }
+    }
+    return null;
+  }
+
+  function drawCentralSightOverlay(theme) {
+    const h = state.doc.header;
+    const origin = worldToScreen(0, 0);
+    const maskR = 0.6 * state.cam.scale;
+
+    if (!(state.doc.hasSynthesizedStatic && isLayerVisible('base'))) {
+      const staticColor = isMotionColorActive() ? MOTION_COLORS.static : theme.crosshair;
+      ctx.save();
+      ctx.strokeStyle = staticColor;
+      ctx.fillStyle = staticColor;
+      ctx.lineWidth = Math.max(1, getEffectiveLineWidth(h) * 0.85);
 
       if (h.drawCentralLineVert) {
         ctx.beginPath();
@@ -2962,14 +3759,6 @@
 
     if (e.button !== 0) return;
 
-    // Reset rangefinder simulation back to 0m before committing edits so coordinates remain unskewed
-    if (state.rangePreview.active && (state.rangePreview.distance > 0 || state.rangePreview.playing)) {
-      state.rangePreview.playing = false;
-      setPreviewDistance(0);
-      syncRangePreviewUI();
-      showToast('Range Preview reset to 0 m for editing', 'warn');
-    }
-
     const wx = state.pointer.worldX;
     const wy = state.pointer.worldY;
     const px = state.pointer.snappedX;
@@ -2991,6 +3780,36 @@
         startAngle: Math.atan2(wy - r.y, wx - r.x)
       };
       return;
+    }
+
+    // Direct HUD Widget dragging on canvas when Drag HUD is active
+    if (state.tool === 'select') {
+      const hudHit = hitTestHudWidgetScreen(sx, sy);
+      if (hudHit) {
+        const wObj = state.doc.hudWidgets?.[hudHit];
+        state.hudEditor.selectedWidget = hudHit;
+        syncHudPresetUIFromDoc();
+        const curPos = Array.isArray(wObj?.position) ? wObj.position : [960, 540];
+        state.drag = {
+          type: 'hud-widget',
+          name: hudHit,
+          startWx: wx,
+          startWy: wy,
+          origPos: [curPos[0] ?? 960, curPos[1] ?? 540],
+          moved: false
+        };
+        canvas.style.cursor = 'grabbing';
+        requestRender();
+        return;
+      }
+    }
+
+    // Reset rangefinder simulation back to 0m before committing edits so coordinates remain unskewed
+    if (state.rangePreview.active && (state.rangePreview.distance > 0 || state.rangePreview.playing)) {
+      state.rangePreview.playing = false;
+      setPreviewDistance(0);
+      syncRangePreviewUI();
+      showToast('Range Preview reset to 0 m for editing', 'warn');
     }
 
     switch (state.tool) {
@@ -3189,13 +4008,17 @@
         if (refH) {
           canvas.style.cursor = refH.type === 'ref-move' ? 'move' : 'pointer';
         } else if (state.tool === 'select') {
-          const handle = getHandleAtScreenPos(sx, sy);
-          if (handle) {
-            canvas.style.cursor = handle.type === 'rotate' ? 'grab' : 'pointer';
-          } else if (hitTestPoint(state.pointer.worldX, state.pointer.worldY)) {
+          if (hitTestHudWidgetScreen(sx, sy)) {
             canvas.style.cursor = 'move';
           } else {
-            canvas.style.cursor = 'default';
+            const handle = getHandleAtScreenPos(sx, sy);
+            if (handle) {
+              canvas.style.cursor = handle.type === 'rotate' ? 'grab' : 'pointer';
+            } else if (hitTestPoint(state.pointer.worldX, state.pointer.worldY)) {
+              canvas.style.cursor = 'move';
+            } else {
+              canvas.style.cursor = 'default';
+            }
           }
         }
       }
@@ -3394,6 +4217,64 @@
         requestRender();
         break;
       }
+
+      case 'hud-widget': {
+        const wObj = state.doc.hudWidgets?.[state.drag.name];
+        if (!wObj) break;
+        let dxHud = (wx - state.drag.startWx) * 1080;
+        let dyHud = (wy - state.drag.startWy) * 1080;
+        if (e.shiftKey) {
+          if (Math.abs(dxHud) >= Math.abs(dyHud)) dyHud = 0;
+          else dxHud = 0;
+        }
+        let nx = Math.max(0, Math.min(1920, state.drag.origPos[0] + dxHud));
+        let ny = Math.max(0, Math.min(1080, state.drag.origPos[1] + dyHud));
+
+        const guides = [];
+        if (!e.altKey) {
+          const thresh = Math.max(2, 6 / Math.max(0.25, state.cam.scale / 1080));
+          const xCands = [960];
+          const yCands = [540];
+          for (const k of BlkParser.HUD_WIDGET_ORDER) {
+            if (k === state.drag.name) continue;
+            const other = state.doc.hudWidgets?.[k];
+            if (other && other.included && other.visible && Array.isArray(other.position)) {
+              xCands.push(other.position[0]);
+              yCands.push(other.position[1]);
+            }
+          }
+          let bestDx = thresh + 1, snapX = null;
+          for (const cx of xCands) {
+            const d = Math.abs(nx - cx);
+            if (d < bestDx) { bestDx = d; snapX = cx; }
+          }
+          if (snapX !== null) {
+            nx = snapX;
+            guides.push({ axis: 'x', val: snapX });
+          }
+          let bestDy = thresh + 1, snapY = null;
+          for (const cy of yCands) {
+            const d = Math.abs(ny - cy);
+            if (d < bestDy) { bestDy = d; snapY = cy; }
+          }
+          if (snapY !== null) {
+            ny = snapY;
+            guides.push({ axis: 'y', val: snapY });
+          }
+        }
+
+        nx = Math.round(nx * 4) / 4;
+        ny = Math.round(ny * 4) / 4;
+        wObj.position = [nx, ny];
+        wObj.wx = (nx - 960) / 1080;
+        wObj.wy = (ny - 540) / 1080;
+        state.hudEditor.snapGuides = guides;
+        if ($('numHudPosX') && state.hudEditor.selectedWidget === state.drag.name) $('numHudPosX').value = String(nx);
+        if ($('numHudPosY') && state.hudEditor.selectedWidget === state.drag.name) $('numHudPosY').value = String(ny);
+        state.drag.moved = true;
+        requestRender();
+        break;
+      }
     }
   });
 
@@ -3412,7 +4293,13 @@
     state.drag = null;
     updateCursorForTool();
 
-    if (d.type === 'move' || d.type === 'vertex' || d.type === 'rotate' || d.type === 'scale') {
+    if (d.type === 'hud-widget') {
+      state.hudEditor.snapGuides = [];
+      if (d.moved) {
+        pushHistory();
+        syncHudPresetUIFromDoc();
+      }
+    } else if (d.type === 'move' || d.type === 'vertex' || d.type === 'rotate' || d.type === 'scale') {
       if (d.moved) {
         pushHistory();
         updateSelectionUI();
@@ -4311,7 +5198,7 @@
 
     const targetLayer = $('selTraceLayer').value || 'draw';
     const th = state.options.defaultThousandth;
-    const mv = state.options.defaultMove;
+    const mv = state.options.defaultMoveRadial ? false : state.options.defaultMove;
     const newBatchIds = new Set();
 
     for (const l of res.lines) {
@@ -4325,7 +5212,8 @@
         x2: fromCanvasUnit(l.x2, th),
         y2: fromCanvasUnit(l.y2, th),
         move: mv,
-        thousandth: th
+        thousandth: th,
+        ...makeDefaultRadialFields((l.x1 + l.x2) * 0.5, (l.y1 + l.y2) * 0.5)
       });
     }
 
@@ -4340,7 +5228,11 @@
         br: { x: fromCanvasUnit(q.br.x, th), y: fromCanvasUnit(q.br.y, th) },
         bl: { x: fromCanvasUnit(q.bl.x, th), y: fromCanvasUnit(q.bl.y, th) },
         move: mv,
-        thousandth: th
+        thousandth: th,
+        ...makeDefaultRadialFields(
+          (q.tl.x + q.tr.x + q.br.x + q.bl.x) * 0.25,
+          (q.tl.y + q.tr.y + q.br.y + q.bl.y) * 0.25
+        )
       });
     }
 
@@ -4454,8 +5346,9 @@
     const qCount = (rawText.match(/quad\s*\{/g) || []).length;
     if (lCount === 0 && qCount === 0) {
       const m = rawText.match(/crosshair\s*:\s*t\s*=\s*"([^"]*)"/i);
-      const presetName = m && m[1] ? m[1].toUpperCase() : 'Standard HUD';
-      return `${name} (Static Preset: ${presetName})`;
+      const presetName = m && m[1] ? m[1] : 'Default_Sight';
+      const isHud = /(rangefinder|gunReady|bulletType|turret|fov|reticle)\s*\{|shotDistScaleOffset|crosshairNvColor|crosshairThermalColor/i.test(rawText);
+      return isHud ? `${name} (HUD Preset: ${presetName})` : `${name} (Preset: ${presetName.toUpperCase()})`;
     }
     return `${name} (${lCount}L${qCount ? `, ${qCount}Q` : ''})`;
   }
@@ -4477,6 +5370,9 @@
       sel.value = prevVal;
     } else if (names.length > 0) {
       sel.value = names[0];
+    }
+    if (typeof refreshHudBackdropDoc === 'function') {
+      refreshHudBackdropDoc();
     }
   }
 
@@ -4501,7 +5397,7 @@
 
     rebuildPresetsDropdown(true);
     if (notifyNew && added.length > 0) {
-      showToast(`Discovered new sight(s) in sights/: ${added.join(', ')}`);
+      showToast(`Discovered sight(s) in sights/: ${added.join(', ')}`);
     }
   }
 
@@ -4568,7 +5464,7 @@
         state.sightsDirHandle = dirHandle;
         $('btnLinkSightsFolder').textContent = `📁 ${dirHandle.name}/ Linked`;
         await scanLinkedSightsDirHandle(false);
-        showToast(`Linked '${dirHandle.name}/' folder. New .blk sights will appear automatically!`);
+        showToast(`Linked '${dirHandle.name}/' folder. Added .blk sights will appear automatically!`);
         return;
       } catch (err) {
         if (err && err.name === 'AbortError') return;
@@ -4588,6 +5484,9 @@
       });
 
       if (asOverlay) {
+        if (parsed.docType === 'hud_preset' && parsed.lines.length + parsed.quads.length + parsed.circles.length + parsed.texts.length === 0) {
+          BlkParser.synthesizeStaticSightGeometry(parsed, 'base');
+        }
         const append = state.options.overlayMode === 'append';
         const baseLines = append ? state.doc.lines : state.doc.lines.filter((s) => s.layer !== 'base');
         const baseQuads = append ? state.doc.quads : state.doc.quads.filter((s) => s.layer !== 'base');
@@ -4609,17 +5508,41 @@
         state.fileName = name;
         state.selection.clear();
         state.lastTraceIds.clear();
+        state.hudBackdrop.customName = '';
+        state.hudBackdrop.customText = '';
+        state.hudBackdrop.doc = null;
+        state.hudBackdrop.key = '';
+        state.hudSim.active = false;
+        if ($('btnRangeSimHud')) $('btnRangeSimHud').classList.remove('active');
+
+        if (parsed.docType === 'hud_preset') {
+          state.options.showHudOverlay = true;
+          state.hudEditor.editOnCanvas = true;
+          const firstIncluded = BlkParser.HUD_WIDGET_ORDER.find((k) => parsed.hudWidgets?.[k]?.included);
+          if (firstIncluded) state.hudEditor.selectedWidget = firstIncluded;
+          if ($('hudPresetPanel')) $('hudPresetPanel').open = true;
+        } else {
+          state.hudEditor.editOnCanvas = false;
+        }
+
         syncHeaderUIFromDoc();
         syncRadialPanelUIFromDoc();
+        if (typeof refreshHudBackdropDoc === 'function') refreshHudBackdropDoc();
         autoConfigurePreviewForDoc();
         resetHistory();
         updateSelectionUI();
         fitView();
         $('activeFileName').textContent = name;
-        const hasRad = docHasRadialFeatures();
-        const staticMsg = parsed.hasSynthesizedStatic ? ' [Static Crosshair & HUD Synthesized]' : '';
-        const radMsg = hasRad ? ' • Circular Rangefinder detected (try ◎ Range Preview!)' : '';
-        showToast(`Loaded ${name} (${parsed.lines.length}L, ${parsed.quads.length}Q, ${parsed.circles.length}C, ${parsed.texts.length}T)${staticMsg}${radMsg}`);
+
+        if (parsed.docType === 'hud_preset') {
+          const cnt = BlkParser.HUD_WIDGET_ORDER.filter((k) => parsed.hudWidgets?.[k]?.included).length;
+          showToast(`Loaded ${name} [HUD Preset • ${cnt} widget(s) • Reticle: ${parsed.header.crosshairPreset || 'Default_Sight'}]`);
+        } else {
+          const hasRad = docHasRadialFeatures();
+          const staticMsg = parsed.hasSynthesizedStatic ? ' [Static Crosshair & HUD Synthesized]' : '';
+          const radMsg = hasRad ? ' • Circular Rangefinder detected (try ◎ Range Preview!)' : '';
+          showToast(`Loaded ${name} (${parsed.lines.length}L, ${parsed.quads.length}Q, ${parsed.circles.length}C, ${parsed.texts.length}T)${staticMsg}${radMsg}`);
+        }
       }
     } catch (err) {
       console.error(err);
@@ -4802,6 +5725,10 @@
     const fill = $('limitMeterFill');
     fill.style.width = `${pct}%`;
     fill.classList.toggle('danger', totalPrimitives > WT_RECOMMENDED_LIMIT);
+    if ($('hudVectorExportHint')) {
+      $('hudVectorExportHint').hidden = !(d.docType === 'hud_preset' && totalPrimitives > 0);
+    }
+    updateMotionLegend();
   }
 
   function updateSelectionUI() {
@@ -4820,7 +5747,7 @@
 
     if (count === 0) return;
 
-    $('chkSelMove').checked = entries.every(({ item }) => !!item.move);
+    $('chkSelMove').checked = entries.every(({ item }) => !!item.move && !item.moveRadial);
     $('chkSelThousandth').checked = entries.every(({ item }) => !!item.thousandth);
     if ($('chkSelHighlight')) {
       $('chkSelHighlight').checked = entries.every(({ item }) => !!item.highlight);
@@ -4955,11 +5882,19 @@
     $('rngCrosshairAlpha').value = h.crosshairColor.a;
     $('colLight').value = rgbToHex(h.crosshairLightColor.r, h.crosshairLightColor.g, h.crosshairLightColor.b);
     $('rngLightAlpha').value = h.crosshairLightColor.a;
+    const nvC = h.crosshairNvColor || { r: 110, g: 255, b: 145, a: 255 };
+    const thC = h.crosshairThermalColor || { r: 242, g: 248, b: 255, a: 255 };
+    if ($('colNv')) $('colNv').value = rgbToHex(nvC.r, nvC.g, nvC.b);
+    if ($('rngNvAlpha')) $('rngNvAlpha').value = nvC.a;
+    if ($('colThermal')) $('colThermal').value = rgbToHex(thC.r, thC.g, thC.b);
+    if ($('rngThermalAlpha')) $('rngThermalAlpha').value = thC.a;
+    if ($('numGlobalDistOffset')) $('numGlobalDistOffset').value = String(Math.round(h.shotDistScaleOffset || 0));
     const mc = h.matchExpClass || { exp_tank: true, exp_heavy_tank: true, exp_tank_destroyer: true, exp_SPAA: true };
     if ($('chkExpTank')) $('chkExpTank').checked = !!mc.exp_tank;
     if ($('chkExpHeavy')) $('chkExpHeavy').checked = !!mc.exp_heavy_tank;
     if ($('chkExpTD')) $('chkExpTD').checked = !!mc.exp_tank_destroyer;
     if ($('chkExpSPAA')) $('chkExpSPAA').checked = !!mc.exp_SPAA;
+    if (typeof syncHudPresetUIFromDoc === 'function') syncHudPresetUIFromDoc();
   }
 
   // =========================================================================
@@ -5003,14 +5938,22 @@
       state.fileName = 'custom_sight.blk';
       state.doc = BlkParser.createEmptyDoc();
       state.selection.clear();
+      state.hudEditor.editOnCanvas = false;
+      state.hudBackdrop.customName = '';
+      state.hudBackdrop.customText = '';
+      state.hudBackdrop.doc = null;
+      state.hudBackdrop.key = '';
+      state.hudSim.active = false;
+      if ($('btnRangeSimHud')) $('btnRangeSimHud').classList.remove('active');
       $('activeFileName').textContent = state.fileName;
       syncHeaderUIFromDoc();
       syncRadialPanelUIFromDoc();
+      if (typeof refreshHudBackdropDoc === 'function') refreshHudBackdropDoc();
       autoConfigurePreviewForDoc();
       resetHistory();
       updateSelectionUI();
       centerOrigin();
-      showToast('Created new blank custom sight');
+      showToast('Created blank custom sight');
     });
 
     $('btnOpenBlk').addEventListener('click', () => $('fileOpenBlk').click());
@@ -5100,7 +6043,16 @@
     document.querySelectorAll('.mode-btn').forEach((btn) => {
       btn.addEventListener('click', () => {
         state.previewMode = btn.dataset.mode.trim();
+        if (state.previewMode === 'motion') {
+          state.options.colorLayers = false;
+          if ($('chkColorLayers')) $('chkColorLayers').checked = false;
+        }
+        if (['day', 'light', 'nvg', 'thermal'].includes(state.previewMode)) {
+          state.hudEditor.colorMode = state.previewMode;
+          if (typeof syncHudPresetUIFromDoc === 'function') syncHudPresetUIFromDoc();
+        }
         document.querySelectorAll('.mode-btn').forEach((b) => b.classList.toggle('active', b === btn));
+        updateMotionLegend();
         requestRender();
       });
     });
@@ -5127,16 +6079,51 @@
     $('chkSnapGrid').addEventListener('change', (e) => { state.options.snapGrid = e.target.checked; });
     $('chkSnapVertex').addEventListener('change', (e) => { state.options.snapVertex = e.target.checked; });
     $('chkShowGrid').addEventListener('change', (e) => { state.options.showGrid = e.target.checked; requestRender(); });
-    $('chkColorLayers').addEventListener('change', (e) => { state.options.colorLayers = e.target.checked; requestRender(); });
+    $('chkColorLayers').addEventListener('change', (e) => {
+      state.options.colorLayers = e.target.checked;
+      if (e.target.checked) {
+        state.options.colorMotion = false;
+        if ($('chkColorMotion')) $('chkColorMotion').checked = false;
+        if (state.previewMode === 'motion') {
+          state.previewMode = 'blueprint';
+          document.querySelectorAll('.mode-btn').forEach((b) => b.classList.toggle('active', b.dataset.mode === 'blueprint'));
+        }
+        updateMotionLegend();
+      }
+      requestRender();
+    });
+    if ($('chkColorMotion')) {
+      $('chkColorMotion').addEventListener('change', (e) => {
+        state.options.colorMotion = e.target.checked;
+        if (e.target.checked) {
+          state.options.colorLayers = false;
+          if ($('chkColorLayers')) $('chkColorLayers').checked = false;
+        }
+        updateMotionLegend();
+        requestRender();
+      });
+    }
     $('chkShowTicks').addEventListener('change', (e) => { state.options.showTicks = e.target.checked; requestRender(); });
     $('numGridStep').addEventListener('change', (e) => {
       state.options.gridStep = Math.max(0.0005, parseFloat(e.target.value) || 0.025);
       requestRender();
     });
-    $('chkDefaultMove').addEventListener('change', (e) => { state.options.defaultMove = e.target.checked; });
+    $('chkDefaultMove').addEventListener('change', (e) => {
+      state.options.defaultMove = e.target.checked;
+      if (e.target.checked && state.options.defaultMoveRadial) {
+        state.options.defaultMoveRadial = false;
+        if ($('chkDefaultMoveRadial')) $('chkDefaultMoveRadial').checked = false;
+      }
+    });
     $('chkDefaultThousandth').addEventListener('change', (e) => { state.options.defaultThousandth = e.target.checked; });
     if ($('chkDefaultMoveRadial')) {
-      $('chkDefaultMoveRadial').addEventListener('change', (e) => { state.options.defaultMoveRadial = e.target.checked; });
+      $('chkDefaultMoveRadial').addEventListener('change', (e) => {
+        state.options.defaultMoveRadial = e.target.checked;
+        if (e.target.checked && state.options.defaultMove) {
+          state.options.defaultMove = false;
+          if ($('chkDefaultMove')) $('chkDefaultMove').checked = false;
+        }
+      });
     }
 
     // Tool options
@@ -5310,6 +6297,7 @@
     $('btnBaseVis').addEventListener('click', () => {
       state.layers.base.visible = !state.layers.base.visible;
       $('btnBaseVis').classList.toggle('active', state.layers.base.visible);
+      updateMotionLegend();
       requestRender();
     });
     $('btnBaseLock').addEventListener('click', () => {
@@ -5327,6 +6315,7 @@
     $('btnDrawVis').addEventListener('click', () => {
       state.layers.draw.visible = !state.layers.draw.visible;
       $('btnDrawVis').classList.toggle('active', state.layers.draw.visible);
+      updateMotionLegend();
       requestRender();
     });
     $('btnDrawLock').addEventListener('click', () => {
@@ -5545,8 +6534,23 @@
     $('btnQuadsToLines').addEventListener('click', convertSelectedQuadsToLines);
 
     $('chkSelMove').addEventListener('change', (e) => {
-      for (const { item } of getSelectedEntries()) item.move = e.target.checked;
+      const checked = e.target.checked;
+      let changed = false;
+      for (const { item } of getSelectedEntries()) {
+        if (isLayerLocked(item.layer)) continue;
+        item.move = checked;
+        if (checked) item.moveRadial = false;
+        changed = true;
+      }
+      if (!changed) {
+        updateSelectionUI();
+        return;
+      }
       pushHistory();
+      syncRadialPanelUIFromDoc();
+      updateSelectionUI();
+      updateMotionLegend();
+      requestRender();
     });
     $('chkSelThousandth').addEventListener('change', (e) => {
       for (const { item } of getSelectedEntries()) item.thousandth = e.target.checked;
@@ -5653,10 +6657,28 @@
       state.doc.modifiedHeaderKeys.add(key);
       requestRender();
     };
-    $('colCrosshair').addEventListener('input', () => updateColor('crosshairColor', 'colCrosshair', 'rngCrosshairAlpha'));
-    $('rngCrosshairAlpha').addEventListener('input', () => updateColor('crosshairColor', 'colCrosshair', 'rngCrosshairAlpha'));
-    $('colLight').addEventListener('input', () => updateColor('crosshairLightColor', 'colLight', 'rngLightAlpha'));
-    $('rngLightAlpha').addEventListener('input', () => updateColor('crosshairLightColor', 'colLight', 'rngLightAlpha'));
+    const bindColorPair = (hexId, alphaId, key) => {
+      if (!$(hexId) || !$(alphaId)) return;
+      $(hexId).addEventListener('input', () => updateColor(key, hexId, alphaId));
+      $(alphaId).addEventListener('input', () => updateColor(key, hexId, alphaId));
+      $(hexId).addEventListener('change', () => pushHistory());
+      $(alphaId).addEventListener('change', () => pushHistory());
+    };
+    bindColorPair('colCrosshair', 'rngCrosshairAlpha', 'crosshairColor');
+    bindColorPair('colLight', 'rngLightAlpha', 'crosshairLightColor');
+    bindColorPair('colNv', 'rngNvAlpha', 'crosshairNvColor');
+    bindColorPair('colThermal', 'rngThermalAlpha', 'crosshairThermalColor');
+
+    if ($('numGlobalDistOffset')) {
+      $('numGlobalDistOffset').addEventListener('change', (e) => {
+        const val = parseInt(e.target.value, 10) || 0;
+        state.doc.header.shotDistScaleOffset = val;
+        state.doc.modifiedHeaderKeys.add('shotDistScaleOffset');
+        if ($('numShotDistOffset')) $('numShotDistOffset').value = String(val);
+        pushHistory();
+        requestRender();
+      });
+    }
 
     // Raw .blk Modal
     $('btnViewCode').addEventListener('click', () => {
@@ -6436,15 +7458,26 @@
     // Selection & CAD per-element moveRadial controls
     $('chkSelMoveRadial')?.addEventListener('change', (e) => {
       const checked = e.target.checked;
+      let changed = false;
       for (const { item } of getSelectedEntries()) {
+        if (isLayerLocked(item.layer)) continue;
         item.moveRadial = checked;
-        if (checked && !Array.isArray(item.radialCenter)) item.radialCenter = [0, 0];
-        if (checked && !Number.isFinite(item.radialAngle)) item.radialAngle = 0;
-        if (checked && !Number.isFinite(item.radialMoveSpeed)) item.radialMoveSpeed = 1;
+        if (checked) {
+          item.move = false;
+          if (!Array.isArray(item.radialCenter)) item.radialCenter = [0, 0];
+          if (!Number.isFinite(item.radialAngle)) item.radialAngle = 0;
+          if (!Number.isFinite(item.radialMoveSpeed)) item.radialMoveSpeed = 1;
+        }
+        changed = true;
+      }
+      if (!changed) {
+        updateSelectionUI();
+        return;
       }
       pushHistory();
       syncRadialPanelUIFromDoc();
       updateSelectionUI();
+      updateMotionLegend();
       requestRender();
     });
 
@@ -6455,10 +7488,12 @@
       const cyStr = $('numSelRadCy')?.value.trim() ?? '';
       const angStr = $('numSelRadAngle')?.value.trim() ?? '';
       const spdStr = $('numSelRadSpeed')?.value.trim() ?? '';
+      const isRad = !!$('chkSelMoveRadial')?.checked;
 
       for (const { item } of entries) {
         if (isLayerLocked(item.layer)) continue;
-        item.moveRadial = !!$('chkSelMoveRadial')?.checked;
+        item.moveRadial = isRad;
+        if (isRad) item.move = false;
         const curC = Array.isArray(item.radialCenter) ? item.radialCenter : [0, 0];
         const nx = cxStr !== '' ? (parseFloat(cxStr) || 0) : curC[0];
         const ny = cyStr !== '' ? (parseFloat(cyStr) || 0) : curC[1];
@@ -6469,6 +7504,7 @@
       pushHistory();
       syncRadialPanelUIFromDoc();
       updateSelectionUI();
+      updateMotionLegend();
       requestRender();
       showToast(`Applied radial settings to ${entries.length} element(s)`);
     });
@@ -6483,6 +7519,7 @@
 
       for (const { kind, item } of entries) {
         item.moveRadial = true;
+        item.move = false;
         const curC = Array.isArray(item.radialCenter) ? item.radialCenter : [0, 0];
         const rcx = cxStr !== '' ? (parseFloat(cxStr) || 0) : curC[0];
         const rcy = cyStr !== '' ? (parseFloat(cyStr) || 0) : curC[1];
@@ -6492,12 +7529,584 @@
         const r = Math.hypot(ref.x - toCanvasUnit(rcx, th, milScale), ref.y - toCanvasUnit(rcy, th, milScale));
         item.radialMoveSpeed = Number((mult * Math.max(0.01, r)).toFixed(6));
       }
+      if ($('chkSelMove')) $('chkSelMove').checked = false;
       if ($('chkSelMoveRadial')) $('chkSelMoveRadial').checked = true;
       pushHistory();
       syncRadialPanelUIFromDoc();
       updateSelectionUI();
+      updateMotionLegend();
       requestRender();
       showToast(`Synced rigid radialMoveSpeed (${mult}×r) on ${entries.length} element(s)`);
+    });
+  }
+
+  // =========================================================================
+  // Tank Sight Preset (HUD) & Reticle Overrides Controller
+  // =========================================================================
+  function ensureHudWidgetsOnDoc() {
+    const defaults = BlkParser.createDefaultHudWidgets();
+    if (!state.doc.hudWidgets) state.doc.hudWidgets = {};
+    for (const k of BlkParser.HUD_WIDGET_ORDER) {
+      if (!state.doc.hudWidgets[k]) state.doc.hudWidgets[k] = defaults[k];
+    }
+    return state.doc.hudWidgets;
+  }
+
+  function refreshHudBackdropDoc() {
+    const dl = $('crosshairPresetList');
+    if (dl) {
+      dl.innerHTML = '';
+      const seen = new Set(['default_sight', 'ariete']);
+      const addOpt = (v) => {
+        const o = document.createElement('option');
+        o.value = v;
+        dl.appendChild(o);
+      };
+      addOpt('Default_Sight');
+      addOpt('ariete');
+      for (const [k, txt] of Object.entries(state.sightsCatalog)) {
+        if (k === 'Default Sight' || typeof txt !== 'string') continue;
+        const stripped = k.replace(/\.blk$/i, '');
+        if (seen.has(stripped.toLowerCase())) continue;
+        const lCount = (txt.match(/line\s*\{/g) || []).length;
+        const qCount = (txt.match(/quad\s*\{/g) || []).length;
+        if (lCount > 0 || qCount > 0) {
+          seen.add(stripped.toLowerCase());
+          addOpt(stripped);
+        }
+      }
+    }
+
+    const statusEl = $('hudBackdropStatus');
+    if (state.doc.docType !== 'hud_preset') {
+      state.hudBackdrop.doc = null;
+      state.hudBackdrop.key = '';
+      if (statusEl) statusEl.textContent = 'Backdrop preview active in HUD Preset mode';
+      return;
+    }
+
+    const preset = (state.doc.header?.crosshairPreset || 'Default_Sight').trim();
+    if (state.hudBackdrop.customText) {
+      const cacheKey = `custom:${state.hudBackdrop.customName}:${preset}`;
+      if (state.hudBackdrop.key !== cacheKey) {
+        const parsed = BlkParser.parse(state.hudBackdrop.customText, {
+          defaultLayer: 'base',
+          autoSynthesizeStatic: false
+        });
+        state.hudBackdrop.doc = parsed;
+        state.hudBackdrop.key = cacheKey;
+      }
+      if (statusEl) statusEl.textContent = `Backdrop: ${state.hudBackdrop.customName} (loaded)`;
+      return;
+    }
+
+    const target = preset.toLowerCase().replace(/\.blk$/i, '');
+    let matchedName = '';
+    let matchedTxt = '';
+    for (const [k, txt] of Object.entries(state.sightsCatalog)) {
+      if (k === 'Default Sight' || typeof txt !== 'string') continue;
+      const fullNoExt = k.toLowerCase().replace(/\.blk$/i, '');
+      const baseNoExt = (k.split('/').pop() || k).toLowerCase().replace(/\.blk$/i, '');
+      if (fullNoExt === target || baseNoExt === target) {
+        matchedName = k;
+        matchedTxt = txt;
+        break;
+      }
+    }
+
+    if (matchedTxt) {
+      const cacheKey = `cat:${matchedName}:${matchedTxt.length}`;
+      if (state.hudBackdrop.key !== cacheKey) {
+        const parsed = BlkParser.parse(matchedTxt, {
+          defaultLayer: 'base',
+          autoSynthesizeStatic: false
+        });
+        state.hudBackdrop.doc = parsed.docType === 'sight' ? parsed : null;
+        state.hudBackdrop.key = cacheKey;
+      }
+      if (state.hudBackdrop.doc) {
+        if (statusEl) statusEl.textContent = `Backdrop: ${matchedName} (from catalog)`;
+        return;
+      }
+    }
+
+    state.hudBackdrop.doc = null;
+    state.hudBackdrop.key = `builtin:${target}`;
+    if (!target || target === 'default_sight' || target === 'ariete') {
+      if (statusEl) statusEl.textContent = `Backdrop: Built-in ${preset || 'Default_Sight'}`;
+    } else {
+      if (statusEl) statusEl.textContent = `Backdrop: "${preset}" not in sights/ (showing Standard — Load Backdrop .blk)`;
+    }
+  }
+
+  function syncHudPresetUIFromDoc() {
+    const doc = state.doc;
+    const h = doc.header;
+    const widgets = ensureHudWidgetsOnDoc();
+    const isHud = doc.docType === 'hud_preset';
+    const includedCount = BlkParser.HUD_WIDGET_ORDER.filter((k) => widgets[k]?.included).length;
+
+    if ($('selDocType')) $('selDocType').value = isHud ? 'hud_preset' : 'sight';
+    if ($('hudPresetStatusBadge')) {
+      const b = $('hudPresetStatusBadge');
+      b.textContent = isHud ? 'HUD PRESET' : (includedCount > 0 ? `${includedCount} HUD` : 'CLASSIC');
+      b.classList.toggle('active', isHud || includedCount > 0);
+    }
+
+    const totalPrimitives = doc.lines.length + doc.quads.length + doc.circles.length + doc.texts.length;
+    if ($('hudVectorExportHint')) {
+      $('hudVectorExportHint').hidden = !(isHud && totalPrimitives > 0);
+    }
+
+    if ($('inpCrosshairPreset')) $('inpCrosshairPreset').value = h.crosshairPreset ?? 'Default_Sight';
+    if ($('numShotDistOffset')) $('numShotDistOffset').value = String(Math.round(h.shotDistScaleOffset || 0));
+
+    const ret = h.reticle || { included: false, overridden: false, lineWidth: 0, fontSize: 0.7 };
+    if ($('chkReticleInclude')) $('chkReticleInclude').checked = !!ret.included;
+    if ($('chkReticleOverridden')) $('chkReticleOverridden').checked = !!ret.overridden;
+    if ($('numReticleLineWidth')) $('numReticleLineWidth').value = String(ret.lineWidth ?? 0);
+    if ($('numReticleFontSize')) $('numReticleFontSize').value = String(ret.fontSize ?? 0.7);
+
+    if ($('chkShowHudOverlay')) $('chkShowHudOverlay').checked = state.options.showHudOverlay !== false;
+    if ($('chkHudEditOnCanvas')) $('chkHudEditOnCanvas').checked = !!state.hudEditor.editOnCanvas;
+
+    const selName = BlkParser.HUD_WIDGET_ORDER.includes(state.hudEditor.selectedWidget)
+      ? state.hudEditor.selectedWidget
+      : 'rangefinder';
+    state.hudEditor.selectedWidget = selName;
+
+    document.querySelectorAll('.hud-widget-tab').forEach((btn) => {
+      const k = btn.dataset.hudWidget;
+      const wObj = widgets[k];
+      btn.classList.toggle('active', k === selName);
+      btn.classList.toggle('included', !!wObj?.included);
+      btn.classList.toggle('visible', !!(wObj?.included && wObj?.visible));
+    });
+
+    const colorMode = state.hudEditor.colorMode || 'day';
+    document.querySelectorAll('.hud-mode-tab').forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.hudColorMode === colorMode);
+    });
+
+    const w = widgets[selName];
+    if ($('lblHudWidgetTitle')) $('lblHudWidgetTitle').textContent = selName;
+    if ($('chkHudWidgetIncluded')) $('chkHudWidgetIncluded').checked = !!w.included;
+    if ($('chkHudWidgetVisible')) $('chkHudWidgetVisible').checked = w.visible !== false;
+
+    const hasPos = selName !== 'fov';
+    if ($('hudWidgetPosBox')) $('hudWidgetPosBox').hidden = !hasPos;
+    if (hasPos) {
+      const pos = Array.isArray(w.position) ? w.position : [960, 540];
+      if ($('numHudPosX')) $('numHudPosX').value = String(BlkParser.formatNum(pos[0] ?? 960));
+      if ($('numHudPosY')) $('numHudPosY').value = String(BlkParser.formatNum(pos[1] ?? 540));
+    }
+
+    const hasFont = selName === 'rangefinder' || selName === 'gunReady' || selName === 'bulletType';
+    if ($('hudWidgetFontBox')) $('hudWidgetFontBox').hidden = !hasFont;
+    if (hasFont) {
+      if ($('numHudTextSize')) $('numHudTextSize').value = String(Math.round(w.textSize ?? 20));
+      if ($('inpHudFont')) $('inpHudFont').value = w.font || 'hud';
+    }
+
+    if ($('hudGunReadyOpts')) $('hudGunReadyOpts').hidden = selName !== 'gunReady';
+    if (selName === 'gunReady') {
+      if ($('chkHudGunReadyMark')) $('chkHudGunReadyMark').checked = w.gunReadyMarkVisible !== false;
+      if ($('chkHudGunReadyCountdown')) $('chkHudGunReadyCountdown').checked = w.gunReadyReloadCountdownVisible !== false;
+    }
+
+    if ($('hudBulletTypeOpts')) $('hudBulletTypeOpts').hidden = selName !== 'bulletType';
+    if (selName === 'bulletType') {
+      if ($('chkHudBulletShortName')) $('chkHudBulletShortName').checked = !!w.isShortName;
+    }
+
+    if ($('hudRangefinderOpts')) $('hudRangefinderOpts').hidden = selName !== 'rangefinder';
+    if (selName === 'rangefinder') {
+      const pc = w.progressColor || { r: 255, g: 255, b: 0, a: 255 };
+      const pbg = w.progressBackgroundColor || { r: 0, g: 0, b: 0, a: 0 };
+      if ($('colHudRfProg')) $('colHudRfProg').value = rgbToHex(pc.r, pc.g, pc.b);
+      if ($('rngHudRfProgAlpha')) $('rngHudRfProgAlpha').value = String(pc.a ?? 255);
+      if ($('colHudRfProgBg')) $('colHudRfProgBg').value = rgbToHex(pbg.r, pbg.g, pbg.b);
+      if ($('rngHudRfProgBgAlpha')) $('rngHudRfProgBgAlpha').value = String(pbg.a ?? 0);
+    }
+
+    const keys = getHudColorKeyMap(selName, colorMode);
+    const fg = w[keys.fg] || { r: 0, g: 255, b: 60, a: 255 };
+    if ($('lblHudFgColor')) $('lblHudFgColor').textContent = keys.bg ? 'Text Color' : 'Color';
+    if ($('colHudFg')) $('colHudFg').value = rgbToHex(fg.r, fg.g, fg.b);
+    if ($('rngHudFgAlpha')) $('rngHudFgAlpha').value = String(fg.a ?? 255);
+
+    if ($('hudWidgetBgRow')) $('hudWidgetBgRow').hidden = !keys.bg;
+    if (keys.bg) {
+      const bg = w[keys.bg] || { r: 0, g: 0, b: 0, a: 0 };
+      if ($('colHudBg')) $('colHudBg').value = rgbToHex(bg.r, bg.g, bg.b);
+      if ($('rngHudBgAlpha')) $('rngHudBgAlpha').value = String(bg.a ?? 0);
+    }
+  }
+
+  function initHudPresetControls() {
+    $('selDocType')?.addEventListener('change', (e) => {
+      const nextType = e.target.value === 'hud_preset' ? 'hud_preset' : 'sight';
+      state.doc.docType = nextType;
+      if (nextType === 'hud_preset') {
+        if (!state.doc.header.crosshairPreset) state.doc.header.crosshairPreset = 'Default_Sight';
+        state.hudEditor.editOnCanvas = true;
+        state.options.showHudOverlay = true;
+      } else {
+        state.hudEditor.editOnCanvas = false;
+      }
+      pushHistory();
+      syncHudPresetUIFromDoc();
+      refreshHudBackdropDoc();
+      requestRender();
+      showToast(nextType === 'hud_preset' ? 'Switched export format to HUD Preset (tank_sight_presets)' : 'Switched export format to Classic Custom Sight');
+    });
+
+    $('btnConvertToClassicSight')?.addEventListener('click', () => {
+      state.doc.docType = 'sight';
+      state.hudEditor.editOnCanvas = false;
+      pushHistory();
+      syncHudPresetUIFromDoc();
+      refreshHudBackdropDoc();
+      requestRender();
+      showToast('Switched document to Classic Custom Sight format');
+    });
+
+    $('btnBuildHudPreset')?.addEventListener('click', () => {
+      const tmpl = $('selHudPresetTemplate')?.value || 'pro';
+      state.fileHandle = null;
+      state.fileName = tmpl === 'minimal' ? 'custom_hud_preset.blk' : 'pro_hud_preset.blk';
+      state.doc = BlkParser.createEmptyHudPresetDoc(tmpl);
+      state.selection.clear();
+      state.hudBackdrop.customName = '';
+      state.hudBackdrop.customText = '';
+      state.hudBackdrop.doc = null;
+      state.hudBackdrop.key = '';
+      state.options.showHudOverlay = true;
+      state.hudEditor.editOnCanvas = true;
+      state.hudEditor.selectedWidget = tmpl === 'minimal' ? 'bulletType' : 'rangefinder';
+      $('activeFileName').textContent = state.fileName;
+      if ($('hudPresetPanel')) $('hudPresetPanel').open = true;
+      syncHeaderUIFromDoc();
+      syncRadialPanelUIFromDoc();
+      refreshHudBackdropDoc();
+      resetHistory();
+      updateSelectionUI();
+      fitView();
+      showToast(`Applied ${tmpl === 'minimal' ? 'Minimal' : 'Pro Competitive'} Tank Sight HUD Preset`);
+    });
+
+    $('inpCrosshairPreset')?.addEventListener('change', (e) => {
+      state.doc.header.crosshairPreset = (e.target.value || 'Default_Sight').trim();
+      state.doc.modifiedHeaderKeys.add('crosshairPreset');
+      state.hudBackdrop.customName = '';
+      state.hudBackdrop.customText = '';
+      state.hudBackdrop.key = '';
+      refreshHudBackdropDoc();
+      pushHistory();
+      requestRender();
+    });
+
+    $('btnLoadHudBackdrop')?.addEventListener('click', () => $('fileHudBackdrop')?.click());
+    $('fileHudBackdrop')?.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      file.text().then((txt) => {
+        state.hudBackdrop.customName = file.name;
+        state.hudBackdrop.customText = txt;
+        state.hudBackdrop.key = '';
+        const noExt = file.name.replace(/\.blk$/i, '');
+        state.doc.header.crosshairPreset = noExt;
+        state.doc.modifiedHeaderKeys.add('crosshairPreset');
+        if ($('inpCrosshairPreset')) $('inpCrosshairPreset').value = noExt;
+        refreshHudBackdropDoc();
+        pushHistory();
+        requestRender();
+        showToast(`Loaded backdrop sight: ${file.name}`);
+      });
+      e.target.value = '';
+    });
+
+    $('btnClearHudBackdrop')?.addEventListener('click', () => {
+      state.hudBackdrop.customName = '';
+      state.hudBackdrop.customText = '';
+      state.hudBackdrop.doc = null;
+      state.hudBackdrop.key = '';
+      refreshHudBackdropDoc();
+      requestRender();
+      showToast('Reset HUD backdrop lookup');
+    });
+
+    $('numShotDistOffset')?.addEventListener('change', (e) => {
+      const val = parseInt(e.target.value, 10) || 0;
+      state.doc.header.shotDistScaleOffset = val;
+      state.doc.modifiedHeaderKeys.add('shotDistScaleOffset');
+      if ($('numGlobalDistOffset')) $('numGlobalDistOffset').value = String(val);
+      pushHistory();
+      requestRender();
+    });
+
+    const getReticle = () => {
+      if (!state.doc.header.reticle) {
+        state.doc.header.reticle = { included: false, overridden: false, lineWidth: 0, fontSize: 0.7 };
+      }
+      return state.doc.header.reticle;
+    };
+
+    $('chkReticleInclude')?.addEventListener('change', (e) => {
+      getReticle().included = e.target.checked;
+      pushHistory();
+      requestRender();
+    });
+    $('chkReticleOverridden')?.addEventListener('change', (e) => {
+      const r = getReticle();
+      r.overridden = e.target.checked;
+      if (e.target.checked) r.included = true;
+      syncHudPresetUIFromDoc();
+      pushHistory();
+      requestRender();
+    });
+    $('numReticleLineWidth')?.addEventListener('change', (e) => {
+      const r = getReticle();
+      r.lineWidth = Math.max(0, Math.min(10, parseFloat(e.target.value) || 0));
+      pushHistory();
+      requestRender();
+    });
+    $('numReticleFontSize')?.addEventListener('change', (e) => {
+      const r = getReticle();
+      r.fontSize = Math.max(0.1, Math.min(5, parseFloat(e.target.value) || 0.7));
+      pushHistory();
+      requestRender();
+    });
+
+    $('chkShowHudOverlay')?.addEventListener('change', (e) => {
+      state.options.showHudOverlay = e.target.checked;
+      requestRender();
+    });
+    $('chkHudEditOnCanvas')?.addEventListener('change', (e) => {
+      state.hudEditor.editOnCanvas = e.target.checked;
+      requestRender();
+    });
+
+    document.querySelectorAll('.hud-widget-tab').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        state.hudEditor.selectedWidget = btn.dataset.hudWidget;
+        syncHudPresetUIFromDoc();
+        requestRender();
+      });
+    });
+
+    document.querySelectorAll('.hud-mode-tab').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const mode = btn.dataset.hudColorMode;
+        state.hudEditor.colorMode = mode;
+        state.previewMode = mode;
+        document.querySelectorAll('.mode-btn').forEach((b) => b.classList.toggle('active', b.dataset.mode === mode));
+        updateMotionLegend();
+        syncHudPresetUIFromDoc();
+        requestRender();
+      });
+    });
+
+    const curW = () => ensureHudWidgetsOnDoc()[state.hudEditor.selectedWidget];
+
+    $('chkHudWidgetIncluded')?.addEventListener('change', (e) => {
+      curW().included = e.target.checked;
+      syncHudPresetUIFromDoc();
+      pushHistory();
+      requestRender();
+    });
+    $('chkHudWidgetVisible')?.addEventListener('change', (e) => {
+      const w = curW();
+      w.visible = e.target.checked;
+      if (e.target.checked) w.included = true;
+      syncHudPresetUIFromDoc();
+      pushHistory();
+      requestRender();
+    });
+
+    const updateWidgetPos = (axis, raw) => {
+      const w = curW();
+      if (!Array.isArray(w.position)) w.position = [960, 540];
+      const max = axis === 0 ? 1920 : 1080;
+      const val = Math.max(0, Math.min(max, parseFloat(raw) || 0));
+      w.position[axis] = Math.round(val * 100) / 100;
+      w.wx = (w.position[0] - 960) / 1080;
+      w.wy = (w.position[1] - 540) / 1080;
+      pushHistory();
+      requestRender();
+    };
+    $('numHudPosX')?.addEventListener('change', (e) => updateWidgetPos(0, e.target.value));
+    $('numHudPosY')?.addEventListener('change', (e) => updateWidgetPos(1, e.target.value));
+
+    $('btnHudCenterX')?.addEventListener('click', () => {
+      updateWidgetPos(0, 960);
+      syncHudPresetUIFromDoc();
+    });
+    $('btnHudCenterY')?.addEventListener('click', () => {
+      updateWidgetPos(1, 540);
+      syncHudPresetUIFromDoc();
+    });
+    $('btnHudMirrorX')?.addEventListener('click', () => {
+      const w = curW();
+      if (!Array.isArray(w.position)) return;
+      updateWidgetPos(0, 1920 - w.position[0]);
+      syncHudPresetUIFromDoc();
+    });
+    $('btnHudSyncRfReadyY')?.addEventListener('click', () => {
+      const widgets = ensureHudWidgetsOnDoc();
+      const selName = state.hudEditor.selectedWidget;
+      const refY = (selName === 'gunReady' ? widgets.gunReady.position?.[1] : widgets.rangefinder.position?.[1]) ?? 549.75;
+      if (Array.isArray(widgets.rangefinder.position)) {
+        widgets.rangefinder.position[1] = refY;
+        widgets.rangefinder.wy = (refY - 540) / 1080;
+      }
+      if (Array.isArray(widgets.gunReady.position)) {
+        widgets.gunReady.position[1] = refY;
+        widgets.gunReady.wy = (refY - 540) / 1080;
+      }
+      syncHudPresetUIFromDoc();
+      pushHistory();
+      requestRender();
+      showToast(`Aligned Rangefinder & GunReady Y = ${refY}`);
+    });
+
+    $('numHudTextSize')?.addEventListener('change', (e) => {
+      curW().textSize = Math.max(8, Math.min(72, Math.round(parseFloat(e.target.value) || 20)));
+      pushHistory();
+      requestRender();
+    });
+    $('inpHudFont')?.addEventListener('change', (e) => {
+      curW().font = (e.target.value || 'hud').trim();
+      pushHistory();
+      requestRender();
+    });
+    $('chkHudGunReadyMark')?.addEventListener('change', (e) => {
+      curW().gunReadyMarkVisible = e.target.checked;
+      pushHistory();
+      requestRender();
+    });
+    $('chkHudGunReadyCountdown')?.addEventListener('change', (e) => {
+      curW().gunReadyReloadCountdownVisible = e.target.checked;
+      pushHistory();
+      requestRender();
+    });
+    $('chkHudBulletShortName')?.addEventListener('change', (e) => {
+      curW().isShortName = e.target.checked;
+      pushHistory();
+      requestRender();
+    });
+
+    const bindRfProgColor = (hexId, alphaId, propKey) => {
+      if (!$(hexId) || !$(alphaId)) return;
+      const apply = () => {
+        const rgb = hexToRgb($(hexId).value);
+        const a = parseInt($(alphaId).value, 10);
+        curW()[propKey] = { r: rgb.r, g: rgb.g, b: rgb.b, a: Number.isFinite(a) ? a : 255 };
+        requestRender();
+      };
+      $(hexId).addEventListener('input', apply);
+      $(alphaId).addEventListener('input', apply);
+      $(hexId).addEventListener('change', () => pushHistory());
+      $(alphaId).addEventListener('change', () => pushHistory());
+    };
+    bindRfProgColor('colHudRfProg', 'rngHudRfProgAlpha', 'progressColor');
+    bindRfProgColor('colHudRfProgBg', 'rngHudRfProgBgAlpha', 'progressBackgroundColor');
+
+    const applyWidgetColor = (isBg, push) => {
+      const name = state.hudEditor.selectedWidget;
+      const w = curW();
+      const keys = getHudColorKeyMap(name, state.hudEditor.colorMode);
+      const targetKey = isBg ? keys.bg : keys.fg;
+      if (!targetKey) return;
+      const hexEl = $(isBg ? 'colHudBg' : 'colHudFg');
+      const alphaEl = $(isBg ? 'rngHudBgAlpha' : 'rngHudFgAlpha');
+      if (!hexEl || !alphaEl) return;
+      const rgb = hexToRgb(hexEl.value);
+      const a = parseInt(alphaEl.value, 10);
+      w[targetKey] = { r: rgb.r, g: rgb.g, b: rgb.b, a: Number.isFinite(a) ? a : 255 };
+      if (push) pushHistory();
+      requestRender();
+    };
+    $('colHudFg')?.addEventListener('input', () => applyWidgetColor(false, false));
+    $('rngHudFgAlpha')?.addEventListener('input', () => applyWidgetColor(false, false));
+    $('colHudFg')?.addEventListener('change', () => applyWidgetColor(false, true));
+    $('rngHudFgAlpha')?.addEventListener('change', () => applyWidgetColor(false, true));
+    $('colHudBg')?.addEventListener('input', () => applyWidgetColor(true, false));
+    $('rngHudBgAlpha')?.addEventListener('input', () => applyWidgetColor(true, false));
+    $('colHudBg')?.addEventListener('change', () => applyWidgetColor(true, true));
+    $('rngHudBgAlpha')?.addEventListener('change', () => applyWidgetColor(true, true));
+
+    $('btnHudCopyDayToModes')?.addEventListener('click', () => {
+      const name = state.hudEditor.selectedWidget;
+      const w = curW();
+      const dayKeys = getHudColorKeyMap(name, 'day');
+      const fgSrc = w[dayKeys.fg];
+      const bgSrc = dayKeys.bg ? w[dayKeys.bg] : null;
+      for (const m of ['light', 'nvg', 'thermal']) {
+        const mk = getHudColorKeyMap(name, m);
+        if (fgSrc) w[mk.fg] = { ...fgSrc };
+        if (mk.bg && bgSrc) w[mk.bg] = { ...bgSrc };
+      }
+      syncHudPresetUIFromDoc();
+      pushHistory();
+      requestRender();
+      showToast(`Copied Day colors across all modes on ${name}`);
+    });
+
+    $('btnHudApplyColorsAllWidgets')?.addEventListener('click', () => {
+      const srcName = state.hudEditor.selectedWidget;
+      const widgets = ensureHudWidgetsOnDoc();
+      const srcW = widgets[srcName];
+      for (const targetName of BlkParser.HUD_WIDGET_ORDER) {
+        if (targetName === srcName) continue;
+        const dstW = widgets[targetName];
+        for (const m of ['day', 'light', 'nvg', 'thermal']) {
+          const sk = getHudColorKeyMap(srcName, m);
+          const dk = getHudColorKeyMap(targetName, m);
+          if (srcW[sk.fg]) dstW[dk.fg] = { ...srcW[sk.fg] };
+          if (dk.bg && sk.bg && srcW[sk.bg]) dstW[dk.bg] = { ...srcW[sk.bg] };
+        }
+      }
+      pushHistory();
+      requestRender();
+      showToast(`Applied ${srcName} color palette to all HUD widgets`);
+    });
+
+    $('btnHudMatchReticleColors')?.addEventListener('click', () => {
+      const h = state.doc.header;
+      const name = state.hudEditor.selectedWidget;
+      const w = curW();
+      const mapPairs = [
+        ['day', h.crosshairColor],
+        ['light', h.crosshairLightColor],
+        ['nvg', h.crosshairNvColor],
+        ['thermal', h.crosshairThermalColor]
+      ];
+      for (const [m, c] of mapPairs) {
+        const mk = getHudColorKeyMap(name, m);
+        if (c) w[mk.fg] = { ...c };
+      }
+      syncHudPresetUIFromDoc();
+      pushHistory();
+      requestRender();
+      showToast(`Matched ${name} colors to Reticle optic colors`);
+    });
+
+    $('btnRangeSimHud')?.addEventListener('click', () => {
+      if (state.hudSim.active) {
+        state.hudSim.active = false;
+        $('btnRangeSimHud')?.classList.remove('active');
+        requestRender();
+        return;
+      }
+      state.hudSim.active = true;
+      state.hudSim.startTs = performance.now();
+      $('btnRangeSimHud')?.classList.add('active');
+      if (!state.options.showHudOverlay) {
+        state.options.showHudOverlay = true;
+        if ($('chkShowHudOverlay')) $('chkShowHudOverlay').checked = true;
+      }
+      requestRender();
     });
   }
 
@@ -6575,17 +8184,35 @@
       return;
     }
 
-    // Arrow key nudging
-    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key) && state.selection.size > 0) {
-      e.preventDefault();
-      const step = e.shiftKey ? 0.02 : 0.0025;
-      const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
-      const dy = e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0;
-      translateSelected(dx, dy);
-      pushHistory();
-      updateSelectionUI();
-      requestRender();
-      return;
+    // Arrow key nudging (vector shapes, or selected HUD widget when Drag HUD is active)
+    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+      if (state.selection.size > 0) {
+        e.preventDefault();
+        const step = e.shiftKey ? 0.02 : 0.0025;
+        const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
+        const dy = e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0;
+        translateSelected(dx, dy);
+        pushHistory();
+        updateSelectionUI();
+        requestRender();
+        return;
+      } else if (state.hudEditor.editOnCanvas && state.options.showHudOverlay) {
+        const w = state.doc.hudWidgets?.[state.hudEditor.selectedWidget];
+        if (w && w.included && w.visible && Array.isArray(w.position)) {
+          e.preventDefault();
+          const step = e.shiftKey ? 10 : 1;
+          const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
+          const dy = e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0;
+          w.position[0] = Math.max(0, Math.min(1920, w.position[0] + dx));
+          w.position[1] = Math.max(0, Math.min(1080, w.position[1] + dy));
+          w.wx = (w.position[0] - 960) / 1080;
+          w.wy = (w.position[1] - 540) / 1080;
+          syncHudPresetUIFromDoc();
+          pushHistory();
+          requestRender();
+          return;
+        }
+      }
     }
 
     if (e.key === 'Delete' || e.key === 'Backspace') {
@@ -6688,6 +8315,15 @@
       state.rangePreview.lastTs = 0;
     }
 
+    if (state.hudSim.active) {
+      const elapsed = (ts - state.hudSim.startTs) / 1000;
+      if (elapsed >= state.hudSim.reloadDuration + 0.6) {
+        state.hudSim.active = false;
+        $('btnRangeSimHud')?.classList.remove('active');
+      }
+      needsRender = true;
+    }
+
     if (needsRender) render();
     requestAnimationFrame(loop);
   }
@@ -6697,6 +8333,7 @@
   // =========================================================================
   initUI();
   initRadialAndPreviewControls();
+  initHudPresetControls();
   resizeCanvas();
   window.addEventListener('resize', resizeCanvas);
   window.addEventListener('load', resizeCanvas);

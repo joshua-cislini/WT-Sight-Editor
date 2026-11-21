@@ -36,6 +36,37 @@
       .filter((n) => Number.isFinite(n));
   }
 
+  function clampByte(n, fallback = 255) {
+    if (!Number.isFinite(n)) return fallback;
+    return Math.max(0, Math.min(255, Math.round(n)));
+  }
+
+  function cloneColor(c, fallback = { r: 0, g: 0, b: 0, a: 255 }) {
+    if (!c || typeof c !== 'object') return { ...fallback };
+    return {
+      r: clampByte(c.r, fallback.r),
+      g: clampByte(c.g, fallback.g),
+      b: clampByte(c.b, fallback.b),
+      a: clampByte(c.a, fallback.a)
+    };
+  }
+
+  function parseColor(rawValue, fallback = { r: 0, g: 0, b: 0, a: 255 }) {
+    const nums = parseNums(rawValue);
+    if (nums.length < 3) return cloneColor(fallback);
+    return {
+      r: clampByte(nums[0], fallback.r),
+      g: clampByte(nums[1], fallback.g),
+      b: clampByte(nums[2], fallback.b),
+      a: nums.length >= 4 ? clampByte(nums[3], fallback.a) : 255
+    };
+  }
+
+  function formatColor(c, fallback = { r: 0, g: 0, b: 0, a: 255 }) {
+    const col = cloneColor(c, fallback);
+    return `${col.r}, ${col.g}, ${col.b}, ${col.a}`;
+  }
+
   function getCloseQuote(ch) {
     if (ch === '"') return '"';
     if (ch === "'") return "'";
@@ -335,6 +366,95 @@
     return items;
   }
 
+  const HUD_WIDGET_ORDER = ['rangefinder', 'turret', 'fov', 'gunReady', 'bulletType'];
+
+  function createDefaultHudWidgets() {
+    const green = { r: 0, g: 255, b: 60, a: 255 };
+    const redOrange = { r: 255, g: 36, b: 0, a: 255 };
+    const blue = { r: 0, g: 100, b: 255, a: 255 };
+    const yellow = { r: 255, g: 255, b: 0, a: 255 };
+    const transparent = { r: 0, g: 0, b: 0, a: 0 };
+
+    return {
+      rangefinder: {
+        name: 'rangefinder',
+        included: false,
+        visible: true,
+        textColor: cloneColor(green),
+        bgColor: cloneColor(transparent),
+        nightVisionTextColor: cloneColor(redOrange),
+        nightVisionBgColor: cloneColor(transparent),
+        lightTextColor: cloneColor(redOrange),
+        lightBgColor: cloneColor(transparent),
+        thermalTextColor: cloneColor(green),
+        thermalBgColor: cloneColor(transparent),
+        position: [1024.5, 549.75],
+        textSize: 20,
+        font: 'hud',
+        progressColor: cloneColor(yellow),
+        progressBackgroundColor: cloneColor(transparent),
+        wx: (1024.5 - 960) / 1080,
+        wy: (549.75 - 540) / 1080
+      },
+      turret: {
+        name: 'turret',
+        included: false,
+        visible: true,
+        color: cloneColor(green),
+        lightColor: cloneColor(redOrange),
+        nvColor: cloneColor(redOrange),
+        thermalColor: cloneColor(green),
+        position: [489.75, 726.75],
+        wx: (489.75 - 960) / 1080,
+        wy: (726.75 - 540) / 1080
+      },
+      fov: {
+        name: 'fov',
+        included: false,
+        visible: true,
+        color: cloneColor(green),
+        lightColor: cloneColor(redOrange),
+        nvColor: cloneColor(redOrange),
+        thermalColor: cloneColor(green)
+      },
+      gunReady: {
+        name: 'gunReady',
+        included: false,
+        visible: true,
+        color: cloneColor(blue),
+        lightColor: cloneColor(redOrange),
+        nvColor: cloneColor(redOrange),
+        thermalColor: cloneColor(blue),
+        textSize: 20,
+        font: 'hud',
+        position: [831, 549.75],
+        gunReadyMarkVisible: true,
+        gunReadyReloadCountdownVisible: true,
+        wx: (831 - 960) / 1080,
+        wy: (549.75 - 540) / 1080
+      },
+      bulletType: {
+        name: 'bulletType',
+        included: false,
+        visible: true,
+        isShortName: false,
+        textColor: cloneColor(green),
+        bgColor: cloneColor(transparent),
+        nightVisionTextColor: cloneColor(redOrange),
+        nightVisionBgColor: cloneColor(transparent),
+        lightTextColor: cloneColor(redOrange),
+        lightBgColor: cloneColor(transparent),
+        thermalTextColor: cloneColor(green),
+        thermalBgColor: cloneColor(transparent),
+        position: [483.75, 273.75],
+        textSize: 30,
+        font: 'hud',
+        wx: (483.75 - 960) / 1080,
+        wy: (273.75 - 540) / 1080
+      }
+    };
+  }
+
   function createDefaultHeader() {
     return {
       crosshairPreset: null,
@@ -347,6 +467,15 @@
       fontSizeMult: 1,
       crosshairColor: { r: 0, g: 0, b: 0, a: 255 },
       crosshairLightColor: { r: 255, g: 64, b: 64, a: 255 },
+      crosshairNvColor: { r: 110, g: 255, b: 145, a: 255 },
+      crosshairThermalColor: { r: 242, g: 248, b: 255, a: 255 },
+      shotDistScaleOffset: 0,
+      reticle: {
+        included: false,
+        overridden: false,
+        lineWidth: 0,
+        fontSize: 0.7
+      },
       crosshairHorVertSize: [3, 2],
       crosshairDistHorSizeMain: [0.03, 0.02],
       crosshairDistHorSizeAdditional: [0.005, 0.003],
@@ -418,6 +547,7 @@
 
   function createEmptyDoc() {
     return {
+      docType: 'sight',
       settings: [
         { key: 'thousandth', type: 't', rawValue: '"ussr"' },
         { key: 'crosshairHorVertSize', type: 'p2', rawValue: '3, 2' },
@@ -457,7 +587,7 @@
       ],
       horRanges: [],
       ballistics: [],
-      hudWidgets: {},
+      hudWidgets: createDefaultHudWidgets(),
       preservedBlocks: [
         {
           name: 'matchExpClass',
@@ -472,6 +602,69 @@
           rawText: 'crosshair_hor_ranges {\n}'
         }
       ],
+      lines: [],
+      quads: [],
+      circles: [],
+      texts: [],
+      modifiedHeaderKeys: new Set(),
+      hasSynthesizedStatic: false
+    };
+  }
+
+  function createEmptyHudPresetDoc(template = 'pro') {
+    const header = createDefaultHeader();
+    header.crosshairPreset = 'Default_Sight';
+    header.shotDistScaleOffset = 0;
+
+    const widgets = createDefaultHudWidgets();
+
+    if (template === 'minimal') {
+      header.crosshairColor = { r: 0, g: 0, b: 0, a: 255 };
+      header.crosshairLightColor = { r: 255, g: 64, b: 64, a: 255 };
+      header.crosshairNvColor = { r: 0, g: 0, b: 0, a: 255 };
+      header.crosshairThermalColor = { r: 0, g: 0, b: 0, a: 255 };
+      header.reticle = { included: false, overridden: false, lineWidth: 0, fontSize: 0.7 };
+
+      const black = { r: 0, g: 0, b: 0, a: 255 };
+      const trans = { r: 0, g: 0, b: 0, a: 0 };
+      const bt = widgets.bulletType;
+      bt.included = true;
+      bt.visible = false;
+      bt.isShortName = false;
+      bt.textColor = cloneColor(black);
+      bt.bgColor = cloneColor(trans);
+      bt.nightVisionTextColor = cloneColor(black);
+      bt.nightVisionBgColor = cloneColor(trans);
+      bt.lightTextColor = cloneColor(black);
+      bt.lightBgColor = cloneColor(trans);
+      bt.thermalTextColor = cloneColor(black);
+      bt.thermalBgColor = cloneColor(trans);
+      bt.position = [700, 202];
+      bt.wx = (700 - 960) / 1080;
+      bt.wy = (202 - 540) / 1080;
+      bt.textSize = 30;
+      bt.font = 'hud';
+    } else {
+      header.crosshairColor = { r: 0, g: 255, b: 60, a: 255 };
+      header.crosshairLightColor = { r: 255, g: 36, b: 0, a: 255 };
+      header.crosshairNvColor = { r: 255, g: 36, b: 0, a: 255 };
+      header.crosshairThermalColor = { r: 0, g: 255, b: 60, a: 255 };
+      header.reticle = { included: true, overridden: true, lineWidth: 0, fontSize: 0.7 };
+      for (const name of HUD_WIDGET_ORDER) {
+        widgets[name].included = true;
+        widgets[name].visible = true;
+      }
+    }
+
+    return {
+      docType: 'hud_preset',
+      settings: [],
+      header,
+      distances: [],
+      horRanges: [],
+      ballistics: [],
+      hudWidgets: widgets,
+      preservedBlocks: [],
       lines: [],
       quads: [],
       circles: [],
@@ -516,14 +709,16 @@
   function parse(blkText, options = {}) {
     const defaultLayer = options.defaultLayer || 'base';
     const autoSynthesizeStatic = options.autoSynthesizeStatic !== false;
+    const forceSynthesizeStatic = options.forceSynthesizeStatic === true;
     const items = parseTopLevel(blkText || '');
     const doc = {
+      docType: 'sight',
       settings: [],
       header: createDefaultHeader(),
       distances: [],
       horRanges: [],
       ballistics: [],
-      hudWidgets: {},
+      hudWidgets: createDefaultHudWidgets(),
       preservedBlocks: [],
       lines: [],
       quads: [],
@@ -534,7 +729,7 @@
     };
 
     const drawBlockNames = new Set(['drawLines', 'drawQuads', 'drawCircles', 'drawTexts']);
-    const hudBlockNames = new Set(['rangefinder', 'turret', 'fov', 'gunReady', 'bulletType']);
+    const hudBlockNames = new Set(HUD_WIDGET_ORDER);
 
     for (const item of items) {
       if (item.kind === 'prop') {
@@ -543,23 +738,27 @@
         doc.settings.push(settingObj);
       } else if (item.kind === 'block') {
         if (!drawBlockNames.has(item.name)) {
-          doc.preservedBlocks.push({ name: item.name, rawText: item.rawText });
-          if (item.name === 'crosshair_distances') {
-            doc.distances = parseDistancesBlock(item.body);
-          } else if (item.name === 'crosshair_hor_ranges') {
-            doc.horRanges = parseHorRangesBlock(item.body);
-          } else if (item.name === 'ballistics') {
-            doc.ballistics = parseBallisticsBlock(item.body);
-          } else if (item.name === 'matchExpClass') {
-            const mp = parseKeyValueBody(item.body);
-            doc.header.matchExpClass = {
-              exp_tank: mp.exp_tank ? parseBool(mp.exp_tank.rawValue) : false,
-              exp_heavy_tank: mp.exp_heavy_tank ? parseBool(mp.exp_heavy_tank.rawValue) : false,
-              exp_tank_destroyer: mp.exp_tank_destroyer ? parseBool(mp.exp_tank_destroyer.rawValue) : false,
-              exp_SPAA: mp.exp_SPAA ? parseBool(mp.exp_SPAA.rawValue) : false
-            };
-          } else if (hudBlockNames.has(item.name)) {
+          if (hudBlockNames.has(item.name)) {
             doc.hudWidgets[item.name] = parseHudWidgetBlock(item.name, item.body);
+          } else if (item.name === 'reticle') {
+            doc.header.reticle = parseReticleBlock(item.body);
+          } else {
+            doc.preservedBlocks.push({ name: item.name, rawText: item.rawText });
+            if (item.name === 'crosshair_distances') {
+              doc.distances = parseDistancesBlock(item.body);
+            } else if (item.name === 'crosshair_hor_ranges') {
+              doc.horRanges = parseHorRangesBlock(item.body);
+            } else if (item.name === 'ballistics') {
+              doc.ballistics = parseBallisticsBlock(item.body);
+            } else if (item.name === 'matchExpClass') {
+              const mp = parseKeyValueBody(item.body);
+              doc.header.matchExpClass = {
+                exp_tank: mp.exp_tank ? parseBool(mp.exp_tank.rawValue) : false,
+                exp_heavy_tank: mp.exp_heavy_tank ? parseBool(mp.exp_heavy_tank.rawValue) : false,
+                exp_tank_destroyer: mp.exp_tank_destroyer ? parseBool(mp.exp_tank_destroyer.rawValue) : false,
+                exp_SPAA: mp.exp_SPAA ? parseBool(mp.exp_SPAA.rawValue) : false
+              };
+            }
           }
           continue;
         }
@@ -579,7 +778,7 @@
               y1: coords[1],
               x2: coords[2],
               y2: coords[3],
-              move: props.move ? parseBool(props.move.rawValue) : false,
+              move: extra.moveRadial ? false : (props.move ? parseBool(props.move.rawValue) : false),
               thousandth: props.thousandth ? parseBool(props.thousandth.rawValue) : false,
               ...extra
             });
@@ -602,7 +801,7 @@
               tr: { x: tr[0], y: tr[1] },
               br: { x: br[0], y: br[1] },
               bl: { x: bl[0], y: bl[1] },
-              move: props.move ? parseBool(props.move.rawValue) : false,
+              move: extra.moveRadial ? false : (props.move ? parseBool(props.move.rawValue) : false),
               thousandth: props.thousandth ? parseBool(props.thousandth.rawValue) : false,
               ...extra
             });
@@ -625,7 +824,7 @@
               size: Number.isFinite(size) ? size : 1.5,
               startAngle: Number.isFinite(seg[0]) ? seg[0] : 0,
               endAngle: Number.isFinite(seg[1]) ? seg[1] : 360,
-              move: props.move ? parseBool(props.move.rawValue) : false,
+              move: extra.moveRadial ? false : (props.move ? parseBool(props.move.rawValue) : false),
               thousandth: props.thousandth ? parseBool(props.thousandth.rawValue) : false,
               ...extra
             });
@@ -646,7 +845,7 @@
               y: pos[1] || 0,
               size: Number.isFinite(size) ? size : 1,
               align: Number.isFinite(align) ? align : 0,
-              move: props.move ? parseBool(props.move.rawValue) : false,
+              move: extra.moveRadial ? false : (props.move ? parseBool(props.move.rawValue) : false),
               thousandth: props.thousandth ? parseBool(props.thousandth.rawValue) : false,
               highlight: props.highlight ? parseBool(props.highlight.rawValue) : false,
               ...extra
@@ -656,11 +855,28 @@
       }
     }
 
-    // If this sight has no custom vector shapes yet (e.g., 4.blk [Standard], 5.blk [TEST/Ariete], or Default Sight),
-    // automatically synthesize its static crosshair, ballistic scale, and HUD elements into the base layer,
-    // unless it defines a native radial scale or ballistics bullet blocks.
     const totalCustomShapes = doc.lines.length + doc.quads.length + doc.circles.length + doc.texts.length;
-    if (autoSynthesizeStatic && totalCustomShapes === 0 && items.length > 0 && !doc.header.radial && doc.ballistics.length === 0) {
+    const classicKeys = new Set(['drawCentralLineVert', 'drawCentralLineHorz', 'thousandth', 'crosshairHorVertSize', 'radial', 'fontSizeMult', 'lineSizeMult']);
+    const hasHudSignal =
+      doc.settings.some((s) => s.key === 'crosshair' || s.key === 'shotDistScaleOffset' || s.key === 'crosshairNvColor' || s.key === 'crosshairThermalColor') ||
+      HUD_WIDGET_ORDER.some((k) => doc.hudWidgets[k]?.included) ||
+      !!doc.header.reticle?.included;
+    const hasClassicSignal =
+      totalCustomShapes > 0 ||
+      doc.ballistics.length > 0 ||
+      doc.distances.length > 0 ||
+      doc.horRanges.length > 0 ||
+      !!doc.header.radial ||
+      doc.settings.some((s) => classicKeys.has(s.key)) ||
+      doc.preservedBlocks.some((b) => b.name === 'matchExpClass' || b.name === 'crosshair_distances' || b.name === 'crosshair_hor_ranges');
+
+    if (hasHudSignal && !hasClassicSignal) {
+      doc.docType = 'hud_preset';
+    }
+
+    // Auto-synthesize static wireframe geometry only for classic preset sights (e.g. 4.blk / 5.blk),
+    // keeping tank_sight_presets HUD files clean (they render live HUD widgets + reticle backdrop directly).
+    if (forceSynthesizeStatic || (autoSynthesizeStatic && totalCustomShapes === 0 && items.length > 0 && !doc.header.radial && doc.ballistics.length === 0 && doc.docType !== 'hud_preset')) {
       synthesizeStaticSightGeometry(doc, defaultLayer);
     }
 
@@ -811,21 +1027,31 @@
     };
 
     const widgets = doc.hudWidgets || {};
-    if (widgets.rangefinder && widgets.rangefinder.visible) {
-      const { wx, wy } = widgets.rangefinder;
+    const widgetCoords = (w) => {
+      if (Array.isArray(w.position) && w.position.length >= 2) {
+        return {
+          wx: ((w.position[0] ?? 960) - 960) / 1080,
+          wy: ((w.position[1] ?? 540) - 540) / 1080
+        };
+      }
+      return { wx: w.wx ?? 0, wy: w.wy ?? 0 };
+    };
+
+    if (widgets.rangefinder && widgets.rangefinder.included && widgets.rangefinder.visible) {
+      const { wx, wy } = widgetCoords(widgets.rangefinder);
       addBox(wx, wy, 0.095, 0.036);
       addT('0000 m', wx, wy, 0.72, 0);
     }
 
-    if (widgets.turret && widgets.turret.visible) {
-      const { wx, wy } = widgets.turret;
+    if (widgets.turret && widgets.turret.included && widgets.turret.visible) {
+      const { wx, wy } = widgetCoords(widgets.turret);
       // Tank hull outline + turret ring + gun barrel
       addBox(wx, wy, 0.046, 0.068);
       addC(wx, wy + 0.004, 0.03, 1.3);
       addL(wx, wy - 0.011, wx, wy - 0.052);
     }
 
-    if (widgets.fov && widgets.fov.visible) {
+    if (widgets.fov && widgets.fov.included && widgets.fov.visible) {
       // 4 Optical FOV Corner Brackets
       const bx = 0.26, by = 0.18, bl = 0.025;
       // Top-left
@@ -838,14 +1064,14 @@
       addL(bx, by, bx - bl, by); addL(bx, by, bx, by - bl);
     }
 
-    if (widgets.gunReady && widgets.gunReady.visible) {
-      const { wx, wy } = widgets.gunReady;
+    if (widgets.gunReady && widgets.gunReady.included && widgets.gunReady.visible) {
+      const { wx, wy } = widgetCoords(widgets.gunReady);
       addBox(wx, wy, 0.095, 0.036);
       addT('READY', wx, wy, 0.72, 0);
     }
 
-    if (widgets.bulletType && widgets.bulletType.visible) {
-      const { wx, wy } = widgets.bulletType;
+    if (widgets.bulletType && widgets.bulletType.included && widgets.bulletType.visible) {
+      const { wx, wy } = widgetCoords(widgets.bulletType);
       addBox(wx, wy, 0.10, 0.034);
       addT('APFSDS', wx, wy, 0.68, 0);
     }
@@ -930,14 +1156,21 @@
         if (Number.isFinite(v)) header.fontSizeMult = v;
         break;
       }
-      case 'crosshairColor': {
-        const c = parseNums(prop.rawValue);
-        if (c.length >= 4) header.crosshairColor = { r: c[0], g: c[1], b: c[2], a: c[3] };
+      case 'crosshairColor':
+        header.crosshairColor = parseColor(prop.rawValue, header.crosshairColor);
         break;
-      }
-      case 'crosshairLightColor': {
-        const c = parseNums(prop.rawValue);
-        if (c.length >= 4) header.crosshairLightColor = { r: c[0], g: c[1], b: c[2], a: c[3] };
+      case 'crosshairLightColor':
+        header.crosshairLightColor = parseColor(prop.rawValue, header.crosshairLightColor);
+        break;
+      case 'crosshairNvColor':
+        header.crosshairNvColor = parseColor(prop.rawValue, header.crosshairNvColor);
+        break;
+      case 'crosshairThermalColor':
+        header.crosshairThermalColor = parseColor(prop.rawValue, header.crosshairThermalColor);
+        break;
+      case 'shotDistScaleOffset': {
+        const v = parseInt(prop.rawValue, 10);
+        if (Number.isFinite(v)) header.shotDistScaleOffset = v;
         break;
       }
       case 'crosshairHorVertSize': {
@@ -1111,20 +1344,143 @@
     return out.join('\n');
   }
 
+  function parseReticleBlock(body) {
+    const props = parseKeyValueBody(body);
+    const lw = props.lineWidth ? parseFloat(props.lineWidth.rawValue) : 0;
+    const fs = props.fontSize ? parseFloat(props.fontSize.rawValue) : 0.7;
+    return {
+      included: true,
+      overridden: props.overridden ? parseBool(props.overridden.rawValue) : false,
+      lineWidth: Number.isFinite(lw) ? lw : 0,
+      fontSize: Number.isFinite(fs) ? fs : 0.7
+    };
+  }
+
+  function buildReticleBlock(ret) {
+    const r = ret || { overridden: false, lineWidth: 0, fontSize: 0.7 };
+    return [
+      'reticle{',
+      `  overridden:b=${r.overridden ? 'yes' : 'no'}`,
+      `  lineWidth:r=${formatNum(r.lineWidth ?? 0)}`,
+      `  fontSize:r=${formatNum(r.fontSize ?? 0.7)}`,
+      '}'
+    ].join('\n');
+  }
+
   function parseHudWidgetBlock(name, body) {
     const props = parseKeyValueBody(body);
-    const visible = props.visible ? parseBool(props.visible.rawValue) : true;
-    const pos = props.position ? parseNums(props.position.rawValue) : [960, 540];
-    // Convert 1920x1080 virtual HUD coordinates to War Thunder sight center-relative units
-    const wx = ((pos[0] ?? 960) - 960) / 1080;
-    const wy = ((pos[1] ?? 540) - 540) / 1080;
-    return {
-      name,
-      visible,
-      rawPos: pos,
-      wx,
-      wy
-    };
+    const defaults = createDefaultHudWidgets();
+    const w = defaults[name] ? { ...defaults[name] } : { name, visible: true };
+    w.included = true;
+
+    if (props.visible) w.visible = parseBool(props.visible.rawValue);
+    if (props.position) {
+      const pos = parseNums(props.position.rawValue);
+      if (pos.length >= 2) w.position = [pos[0], pos[1]];
+    }
+    const pos = Array.isArray(w.position) ? w.position : [960, 540];
+    w.wx = ((pos[0] ?? 960) - 960) / 1080;
+    w.wy = ((pos[1] ?? 540) - 540) / 1080;
+
+    if (props.textSize) {
+      const ts = parseInt(props.textSize.rawValue, 10);
+      if (Number.isFinite(ts)) w.textSize = ts;
+    }
+    if (props.font) w.font = unquote(props.font.rawValue) || 'hud';
+
+    if (name === 'rangefinder' || name === 'bulletType') {
+      if (props.textColor) w.textColor = parseColor(props.textColor.rawValue, w.textColor);
+      if (props.bgColor) w.bgColor = parseColor(props.bgColor.rawValue, w.bgColor);
+      if (props.nightVisionTextColor) w.nightVisionTextColor = parseColor(props.nightVisionTextColor.rawValue, w.nightVisionTextColor);
+      if (props.nightVisionBgColor) w.nightVisionBgColor = parseColor(props.nightVisionBgColor.rawValue, w.nightVisionBgColor);
+      if (props.lightTextColor) w.lightTextColor = parseColor(props.lightTextColor.rawValue, w.lightTextColor);
+      if (props.lightBgColor) w.lightBgColor = parseColor(props.lightBgColor.rawValue, w.lightBgColor);
+      if (props.thermalTextColor) w.thermalTextColor = parseColor(props.thermalTextColor.rawValue, w.thermalTextColor);
+      if (props.thermalBgColor) w.thermalBgColor = parseColor(props.thermalBgColor.rawValue, w.thermalBgColor);
+    }
+
+    if (name === 'rangefinder') {
+      if (props.progressColor) w.progressColor = parseColor(props.progressColor.rawValue, w.progressColor);
+      if (props.progressBackgroundColor) w.progressBackgroundColor = parseColor(props.progressBackgroundColor.rawValue, w.progressBackgroundColor);
+    }
+
+    if (name === 'bulletType' && props.isShortName) {
+      w.isShortName = parseBool(props.isShortName.rawValue);
+    }
+
+    if (name === 'turret' || name === 'fov' || name === 'gunReady') {
+      if (props.color) w.color = parseColor(props.color.rawValue, w.color);
+      if (props.lightColor) w.lightColor = parseColor(props.lightColor.rawValue, w.lightColor);
+      if (props.nvColor) w.nvColor = parseColor(props.nvColor.rawValue, w.nvColor);
+      if (props.thermalColor) w.thermalColor = parseColor(props.thermalColor.rawValue, w.thermalColor);
+    }
+
+    if (name === 'gunReady') {
+      if (props.gunReadyMarkVisible) w.gunReadyMarkVisible = parseBool(props.gunReadyMarkVisible.rawValue);
+      if (props.gunReadyReloadCountdownVisible) w.gunReadyReloadCountdownVisible = parseBool(props.gunReadyReloadCountdownVisible.rawValue);
+    }
+
+    return w;
+  }
+
+  function buildHudWidgetBlock(name, w) {
+    if (!w) return '';
+    const out = [`${name}{`];
+    out.push(`  visible:b=${w.visible !== false ? 'yes' : 'no'}`);
+    const pos = Array.isArray(w.position) ? w.position : [960, 540];
+
+    if (name === 'rangefinder') {
+      out.push(`  textColor:c=${formatColor(w.textColor)}`);
+      out.push(`  bgColor:c=${formatColor(w.bgColor, { r: 0, g: 0, b: 0, a: 0 })}`);
+      out.push(`  nightVisionTextColor:c=${formatColor(w.nightVisionTextColor)}`);
+      out.push(`  nightVisionBgColor:c=${formatColor(w.nightVisionBgColor, { r: 0, g: 0, b: 0, a: 0 })}`);
+      out.push(`  lightTextColor:c=${formatColor(w.lightTextColor)}`);
+      out.push(`  lightBgColor:c=${formatColor(w.lightBgColor, { r: 0, g: 0, b: 0, a: 0 })}`);
+      out.push(`  thermalTextColor:c=${formatColor(w.thermalTextColor)}`);
+      out.push(`  thermalBgColor:c=${formatColor(w.thermalBgColor, { r: 0, g: 0, b: 0, a: 0 })}`);
+      out.push(`  position:p2=${formatNum(pos[0] ?? 1024.5)}, ${formatNum(pos[1] ?? 549.75)}`);
+      out.push(`  textSize:i=${Math.round(w.textSize ?? 20)}`);
+      out.push(`  font:t=${quoteStr(w.font || 'hud')}`);
+      out.push(`  progressColor:c=${formatColor(w.progressColor, { r: 255, g: 255, b: 0, a: 255 })}`);
+      out.push(`  progressBackgroundColor:c=${formatColor(w.progressBackgroundColor, { r: 0, g: 0, b: 0, a: 0 })}`);
+    } else if (name === 'turret') {
+      out.push(`  color:c=${formatColor(w.color)}`);
+      out.push(`  lightColor:c=${formatColor(w.lightColor)}`);
+      out.push(`  nvColor:c=${formatColor(w.nvColor)}`);
+      out.push(`  thermalColor:c=${formatColor(w.thermalColor)}`);
+      out.push(`  position:p2=${formatNum(pos[0] ?? 489.75)}, ${formatNum(pos[1] ?? 726.75)}`);
+    } else if (name === 'fov') {
+      out.push(`  color:c=${formatColor(w.color)}`);
+      out.push(`  lightColor:c=${formatColor(w.lightColor)}`);
+      out.push(`  nvColor:c=${formatColor(w.nvColor)}`);
+      out.push(`  thermalColor:c=${formatColor(w.thermalColor)}`);
+    } else if (name === 'gunReady') {
+      out.push(`  color:c=${formatColor(w.color)}`);
+      out.push(`  lightColor:c=${formatColor(w.lightColor)}`);
+      out.push(`  nvColor:c=${formatColor(w.nvColor)}`);
+      out.push(`  thermalColor:c=${formatColor(w.thermalColor)}`);
+      out.push(`  textSize:i=${Math.round(w.textSize ?? 20)}`);
+      out.push(`  font:t=${quoteStr(w.font || 'hud')}`);
+      out.push(`  position:p2=${formatNum(pos[0] ?? 831)}, ${formatNum(pos[1] ?? 549.75)}`);
+      out.push(`  gunReadyMarkVisible:b=${w.gunReadyMarkVisible !== false ? 'yes' : 'no'}`);
+      out.push(`  gunReadyReloadCountdownVisible:b=${w.gunReadyReloadCountdownVisible !== false ? 'yes' : 'no'}`);
+    } else if (name === 'bulletType') {
+      out.push(`  isShortName:b=${w.isShortName ? 'yes' : 'no'}`);
+      out.push(`  textColor:c=${formatColor(w.textColor)}`);
+      out.push(`  bgColor:c=${formatColor(w.bgColor, { r: 0, g: 0, b: 0, a: 0 })}`);
+      out.push(`  nightVisionTextColor:c=${formatColor(w.nightVisionTextColor)}`);
+      out.push(`  nightVisionBgColor:c=${formatColor(w.nightVisionBgColor, { r: 0, g: 0, b: 0, a: 0 })}`);
+      out.push(`  lightTextColor:c=${formatColor(w.lightTextColor)}`);
+      out.push(`  lightBgColor:c=${formatColor(w.lightBgColor, { r: 0, g: 0, b: 0, a: 0 })}`);
+      out.push(`  thermalTextColor:c=${formatColor(w.thermalTextColor)}`);
+      out.push(`  thermalBgColor:c=${formatColor(w.thermalBgColor, { r: 0, g: 0, b: 0, a: 0 })}`);
+      out.push(`  position:p2=${formatNum(pos[0] ?? 483.75)}, ${formatNum(pos[1] ?? 273.75)}`);
+      out.push(`  textSize:i=${Math.round(w.textSize ?? 30)}`);
+      out.push(`  font:t=${quoteStr(w.font || 'hud')}`);
+    }
+
+    out.push('}');
+    return out.join('\n');
   }
 
   function upsertSetting(settings, key, type, rawValue) {
@@ -1139,14 +1495,12 @@
   function syncHeaderToSettings(doc) {
     const h = doc.header;
     const settings = doc.settings.map((s) => ({ ...s }));
-    const colorStr = (c) => `${Math.round(c.r)}, ${Math.round(c.g)}, ${Math.round(c.b)}, ${Math.round(c.a)}`;
+    const p2Str = (arr, defA = 0, defB = 0) => `${formatNum(arr?.[0] ?? defA)}, ${formatNum(arr?.[1] ?? defB)}`;
 
-    // If the document has custom drawn geometry (lines/quads/circles/texts) and came from a HUD preset
-    // without classic custom sight headers, ensure essential custom sight headers are present for War Thunder.
+    // Ensure essential classic CDK headers are present if converting a HUD-only document into a classic custom sight
     const hasCustomArt = (doc.lines.length + doc.quads.length + doc.circles.length + doc.texts.length) > 0;
-    const isHudOnlyPreset = settings.some((s) => s.key === 'crosshair') && !settings.some((s) => s.key === 'drawCentralLineVert');
-
-    if (hasCustomArt && isHudOnlyPreset) {
+    const missingClassicHeader = !settings.some((s) => s.key === 'drawCentralLineVert');
+    if (doc.docType !== 'hud_preset' && (hasCustomArt || missingClassicHeader) && settings.some((s) => s.key === 'crosshair')) {
       const defaults = [
         ['thousandth', 't', quoteStr(h.thousandthMode || 'ussr')],
         ['crosshairHorVertSize', 'p2', '3, 2'],
@@ -1159,13 +1513,14 @@
         ['drawDistanceCorrection', 'b', h.drawDistanceCorrection ? 'yes' : 'no']
       ];
       for (const [k, t, v] of defaults) {
-        upsertSetting(settings, k, t, v);
+        if (!settings.some((s) => s.key === k)) {
+          upsertSetting(settings, k, t, v);
+        }
       }
     }
 
-    const p2Str = (arr, defA = 0, defB = 0) => `${formatNum(arr?.[0] ?? defA)}, ${formatNum(arr?.[1] ?? defB)}`;
-
     const managed = [
+      ['crosshair', 't', quoteStr(h.crosshairPreset || 'Default_Sight')],
       ['thousandth', 't', quoteStr(h.thousandthMode || 'ussr')],
       ['fontSizeMult', 'r', formatNum(h.fontSizeMult)],
       ['lineSizeMult', 'r', formatNum(h.lineSizeMult)],
@@ -1175,8 +1530,11 @@
       ['useSmoothEdge', 'b', h.useSmoothEdge ? 'yes' : 'no'],
       ['applyCorrectionToGun', 'b', h.applyCorrectionToGun !== false ? 'yes' : 'no'],
       ['drawDistanceCorrection', 'b', h.drawDistanceCorrection ? 'yes' : 'no'],
-      ['crosshairColor', 'c', colorStr(h.crosshairColor)],
-      ['crosshairLightColor', 'c', colorStr(h.crosshairLightColor)],
+      ['crosshairColor', 'c', formatColor(h.crosshairColor)],
+      ['crosshairLightColor', 'c', formatColor(h.crosshairLightColor)],
+      ['crosshairNvColor', 'c', formatColor(h.crosshairNvColor)],
+      ['crosshairThermalColor', 'c', formatColor(h.crosshairThermalColor)],
+      ['shotDistScaleOffset', 'i', String(Math.round(h.shotDistScaleOffset || 0))],
       ['radial', 'b', h.radial ? 'yes' : 'no'],
       ['circleMode', 'b', h.circleMode ? 'yes' : 'no'],
       ['drawUpward', 'b', h.drawUpward ? 'yes' : 'no'],
@@ -1194,7 +1552,11 @@
 
     for (const [key, type, val] of managed) {
       const exists = settings.some((s) => s.key === key && (!type || !s.type || s.type === type));
-      const modified = doc.modifiedHeaderKeys && (doc.modifiedHeaderKeys.has(key) || (key === 'thousandth' && doc.modifiedHeaderKeys.has('thousandthMode')));
+      const modified = doc.modifiedHeaderKeys && (
+        doc.modifiedHeaderKeys.has(key) ||
+        (key === 'thousandth' && doc.modifiedHeaderKeys.has('thousandthMode')) ||
+        (key === 'crosshair' && doc.modifiedHeaderKeys.has('crosshairPreset'))
+      );
       if (exists || modified) {
         upsertSetting(settings, key, type, val);
       }
@@ -1241,7 +1603,67 @@
     ].join('\n');
   }
 
+  function serializeHudPreset(doc) {
+    const h = doc.header;
+    const linesOut = [
+      `crosshair:t=${quoteStr(h.crosshairPreset || 'Default_Sight')}`,
+      `crosshairColor:c=${formatColor(h.crosshairColor)}`,
+      `crosshairLightColor:c=${formatColor(h.crosshairLightColor)}`,
+      `crosshairNvColor:c=${formatColor(h.crosshairNvColor)}`,
+      `crosshairThermalColor:c=${formatColor(h.crosshairThermalColor)}`,
+      `shotDistScaleOffset:i=${Math.round(h.shotDistScaleOffset || 0)}`
+    ];
+
+    const managedHudKeys = new Set([
+      'crosshair',
+      'crosshairColor',
+      'crosshairLightColor',
+      'crosshairNvColor',
+      'crosshairThermalColor',
+      'shotDistScaleOffset'
+    ]);
+    for (const s of (doc.settings || [])) {
+      if (!managedHudKeys.has(s.key)) {
+        const typePart = s.type ? `:${s.type}` : '';
+        linesOut.push(`${s.key}${typePart}=${s.rawValue}`);
+      }
+    }
+
+    const widgets = doc.hudWidgets || {};
+    const blockStrings = [];
+    for (const name of HUD_WIDGET_ORDER) {
+      if (widgets[name] && widgets[name].included) {
+        blockStrings.push(buildHudWidgetBlock(name, widgets[name]));
+      }
+    }
+    if (h.reticle && h.reticle.included) {
+      blockStrings.push(buildReticleBlock(h.reticle));
+    }
+
+    const classicBlockNames = new Set(['matchExpClass', 'crosshair_distances', 'crosshair_hor_ranges', 'ballistics']);
+    for (const blk of (doc.preservedBlocks || [])) {
+      if (!classicBlockNames.has(blk.name) && blk.rawText?.trim()) {
+        blockStrings.push(blk.rawText.trim());
+      }
+    }
+
+    if (blockStrings.length > 0) {
+      linesOut.push('');
+      for (let i = 0; i < blockStrings.length; i++) {
+        linesOut.push(blockStrings[i]);
+        if (i < blockStrings.length - 1) linesOut.push('');
+      }
+    }
+
+    linesOut.push('');
+    return linesOut.join('\n');
+  }
+
   function serialize(doc, options = {}) {
+    if (doc.docType === 'hud_preset' && options.forceFormat !== 'sight') {
+      return serializeHudPreset(doc);
+    }
+
     const excludeBaseLayer = options.excludeBaseLayer === true;
     const linesOut = [];
     const settings = syncHeaderToSettings(doc);
@@ -1289,6 +1711,22 @@
       }
     }
 
+    const hudWidgets = doc.hudWidgets || {};
+    let emittedHud = false;
+    for (const name of HUD_WIDGET_ORDER) {
+      if (hudWidgets[name] && hudWidgets[name].included) {
+        if (!emittedHud && preserved.length === 0) linesOut.push('');
+        linesOut.push(buildHudWidgetBlock(name, hudWidgets[name]));
+        linesOut.push('');
+        emittedHud = true;
+      }
+    }
+    if (doc.header?.reticle?.included) {
+      if (!emittedHud && preserved.length === 0) linesOut.push('');
+      linesOut.push(buildReticleBlock(doc.header.reticle));
+      linesOut.push('');
+    }
+
     const filterFn = (item) => !(excludeBaseLayer && item.layer === 'base');
     const exportLines = (doc.lines || []).filter(filterFn);
     const exportQuads = (doc.quads || []).filter(filterFn);
@@ -1297,10 +1735,11 @@
 
     linesOut.push('drawLines{');
     for (const l of exportLines) {
+      const isMove = !l.moveRadial && !!l.move;
       const th = l.thousandth ? 'thousandth:b=true;' : '';
       const extra = formatExtraElementProps(l);
       linesOut.push(
-        `  line {line:p4=${formatNum(l.x1)},${formatNum(l.y1)},${formatNum(l.x2)},${formatNum(l.y2)};move:b=${l.move ? 'true' : 'false'};${th}${extra}}`
+        `  line {line:p4=${formatNum(l.x1)},${formatNum(l.y1)},${formatNum(l.x2)},${formatNum(l.y2)};move:b=${isMove ? 'true' : 'false'};${th}${extra}}`
       );
     }
     linesOut.push('}');
@@ -1309,7 +1748,8 @@
       linesOut.push('');
       linesOut.push('drawQuads{');
       for (const q of exportQuads) {
-        const mv = q.move ? 'move:b=true;' : '';
+        const isMove = !q.moveRadial && !!q.move;
+        const mv = isMove ? 'move:b=true;' : '';
         const th = q.thousandth ? 'thousandth:b=true;' : '';
         const extra = formatExtraElementProps(q);
         linesOut.push(
@@ -1323,10 +1763,11 @@
       linesOut.push('');
       linesOut.push('drawCircles{');
       for (const c of exportCircles) {
+        const isMove = !c.moveRadial && !!c.move;
         const th = c.thousandth ? 'thousandth:b=true;' : '';
         const extra = formatExtraElementProps(c);
         linesOut.push(
-          `  circle {segment:p2=${formatNum(c.startAngle)},${formatNum(c.endAngle)};pos:p2=${formatNum(c.x)},${formatNum(c.y)};diameter:r=${formatNum(c.diameter)};size:r=${formatNum(c.size)};move:b=${c.move ? 'true' : 'false'};${th}${extra}}`
+          `  circle {segment:p2=${formatNum(c.startAngle)},${formatNum(c.endAngle)};pos:p2=${formatNum(c.x)},${formatNum(c.y)};diameter:r=${formatNum(c.diameter)};size:r=${formatNum(c.size)};move:b=${isMove ? 'true' : 'false'};${th}${extra}}`
         );
       }
       linesOut.push('}');
@@ -1336,10 +1777,11 @@
       linesOut.push('');
       linesOut.push('drawTexts{');
       for (const t of exportTexts) {
+        const isMove = !t.moveRadial && !!t.move;
         const th = t.thousandth ? 'thousandth:b=true;' : '';
         const extra = formatExtraElementProps(t);
         linesOut.push(
-          `  text {text:t=${quoteStr(t.text)};align:i=${Math.round(t.align || 0)};pos:p2=${formatNum(t.x)},${formatNum(t.y)};move:b=${t.move ? 'true' : 'false'};size:r=${formatNum(t.size)};${extra}${th}}`
+          `  text {text:t=${quoteStr(t.text)};align:i=${Math.round(t.align || 0)};pos:p2=${formatNum(t.x)},${formatNum(t.y)};move:b=${isMove ? 'true' : 'false'};size:r=${formatNum(t.size)};${extra}${th}}`
         );
       }
       linesOut.push('}');
@@ -1353,10 +1795,15 @@
     parse,
     serialize,
     createEmptyDoc,
+    createEmptyHudPresetDoc,
+    createDefaultHudWidgets,
     createDefaultBullet,
     buildDistancesBlock,
     buildBallisticsBlock,
+    buildHudWidgetBlock,
+    buildReticleBlock,
     synthesizeStaticSightGeometry,
+    HUD_WIDGET_ORDER,
     nextId,
     formatNum
   };

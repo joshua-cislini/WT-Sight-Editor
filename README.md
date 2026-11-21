@@ -14,10 +14,12 @@ Built in compliance with the official [War Thunder CDK Custom Sight Specificatio
 4. [Left Toolbar: All 12 Tools & Quick Selection Actions](#4-left-toolbar-all-12-tools--quick-selection-actions)
 5. [Right Inspector: Complete Panel-by-Panel Reference](#5-right-inspector-complete-panel-by-panel-reference)
    - [Panel 1: Drawing & Tool Options](#panel-1-drawing--tool-options)
-   - [Panel 2: Ref Image & Pro Auto-Draw](#panel-2-ref-image--pro-auto-draw)
-   - [Panel 3: Reticle Layers & Static Base](#panel-3-reticle-layers--static-base)
-   - [Panel 4: Selection & CAD](#panel-4-selection--cad)
-   - [Panel 5: Sight Global Settings (CDK)](#panel-5-sight-global-settings-cdk)
+   - [Panel 2: Circular Rangefinder (Radial)](#panel-2-circular-rangefinder-radial)
+   - [Panel 3: Tank Sight Preset (HUD)](#panel-3-tank-sight-preset-hud)
+   - [Panel 4: Ref Image & Pro Auto-Draw](#panel-4-ref-image--pro-auto-draw)
+   - [Panel 5: Reticle Layers & Static Base](#panel-5-reticle-layers--static-base)
+   - [Panel 6: Selection & CAD](#panel-6-selection--cad)
+   - [Panel 7: Sight Global Settings (CDK)](#panel-7-sight-global-settings-cdk)
 6. [Complete Keyboard & Mouse Shortcuts](#6-complete-keyboard--mouse-shortcuts)
 7. [Step-by-Step Workflows](#7-step-by-step-workflows)
 8. [How to Install Your `.blk` Sight in War Thunder](#8-how-to-install-your-blk-sight-in-war-thunder)
@@ -57,17 +59,18 @@ Because the editor runs 100% client-side in HTML5/CSS/JS, you can host the folde
 | **`index.html`** | Studio layout (top bar, left toolbar, center canvas, right inspector panels, Raw `.blk` modal, Quick Guide modal) and automatic web cache-busting loader. |
 | **`styles.css`** | Visual stylesheet and dark studio theme. |
 | **`app.js`** | 60-FPS batched canvas renderer, all 12 drawing/CAD tools, Eraser, Sight Optimizer, Multi-Mode Image Auto-Tracer, undo/redo history, PNG exporter, and file linking. |
-| **`blk-parser.js`** | War Thunder `.blk` parser, static sight/HUD geometry synthesizer, and CDK-compliant serializer. |
+| **`blk-parser.js`** | War Thunder `.blk` parser, static sight/HUD geometry synthesizer, and dual-format serializer (classic custom sights and `tank_sight_presets` HUD files). |
 | **`presets.js`** | Pre-bundled JavaScript catalog containing all `.blk` sights discovered in `sights/` plus the built-in `Default Sight`. |
-| **`sights/`** | Live library folder containing example `.blk` sights (vector art sights and modern dynamic HUD preset examples). Any `.blk` file placed here is automatically discovered. |
+| **`sights/`** | Live library folder containing example `.blk` sights (vector art sights and preset examples). Any `.blk` file placed here is automatically discovered. |
 | **`sync-sights.ps1`** | PowerShell script that scans `sights/` recursively, bundles sights into `presets.js`, and watches for file changes when `-Watch` is passed. |
 | **`Start-ReticleStudio.bat`** | One-click Windows launcher that opens the editor and starts the `sync-sights.ps1` watcher. |
 | **`.nojekyll`** | Tells GitHub Pages to serve files as static assets without Jekyll processing. |
 | **`README.md` / `LICENSE`** | Full documentation and MIT License file. |
 
 ### How the `sights/` Example Folder Works
-- The `sights/` folder includes ready-to-use example `.blk` sights (covering both custom vector art sights and modern dynamic HUD presets) plus a built-in `Default Sight`.
-- **Automatic Static Crosshair & HUD Synthesis**: Modern War Thunder preset files (which define `crosshair:t="..."` and HUD widget blocks like `rangefinder`, `turret`, `fov`, `gunReady`, `bulletType` with empty `drawLines{}`) contain no raw vector lines of their own. When you open or overlay one, **WT Reticle Studio Pro automatically synthesizes its static central crosshair, ballistic range ticks (`crosshair_distances`), horizontal mil markings (`crosshair_hor_ranges`), and 1920x1080 HUD layout frames into the Base Layer** so you can visually trace or draw artwork right over them.
+- The `sights/` folder includes ready-to-use example `.blk` sights plus a built-in `Default Sight`.
+- **Tank Sight HUD Presets (`tank_sight_presets/*.blk`)**: Modern War Thunder preset files define `crosshair:t="..."`, per-optic reticle colors (`Day`, `Illum`, `NVG`, `Thermal`), `reticle` overrides, `shotDistScaleOffset:i`, and 1920x1080 HUD widget blocks (`rangefinder`, `turret`, `fov`, `gunReady`, `bulletType`) without embedding raw vector shapes. Opening one switches automatically into **HUD Preset** mode so you can drag widgets directly on the canvas, preview any custom `.blk` sight referenced by `crosshair:t` underneath, and export clean `tank_sight_presets` `.blk` files without unwanted `drawLines` or `matchExpClass` blocks.
+- **Classic Static Crosshair Synthesis & `Overlay .blk`**: Classic presets with no `drawLines` (such as `Default Sight` or `ariete`) automatically synthesize static lines onto the **Base Layer** so you can trace or draw artwork right over them, and using **Overlay .blk** on a HUD preset similarly generates wireframe guides in the Base Layer.
 
 ---
 
@@ -78,25 +81,26 @@ Because the editor runs 100% client-side in HTML5/CSS/JS, you can host the folde
 - **`sights/` Dropdown**: Selects and loads any sight from `sights/`, uploaded files, or `Default Sight` into the workspace.
 - **`↻` (Rescan `sights/` Folder)**: Manually triggers an immediate rescan of any linked folder handle and reloads `presets.js`.
 - **`📁 Link sights/`**: Opens a native directory picker (`showDirectoryPicker`, with a folder `<input>` fallback) so you can point your browser directly at your local `sights/` folder (or directly at War Thunder's `UserSights` folder) for live discovery without the `.bat` watcher. When already linked cleanly, the button label updates to `📁 <folder>/ Linked`.
-- **`New`**: Creates a clean blank CDK custom sight (`custom_sight.blk`) with default central hairs, sample `crosshair_distances`, `matchExpClass`, and `thousandth:t="ussr"`, resets history, and centers the view.
+- **`Blank`**: Creates a clean blank CDK custom sight (`custom_sight.blk`) with default central hairs, sample `crosshair_distances`, `matchExpClass`, and `thousandth:t="ussr"`, resets history, and centers the view.
 - **`Open .blk`**: Opens a `.blk` or `.txt` file from disk, adds it to the dropdown catalog, and replaces the current workspace document.
-- **`Overlay .blk`**: Opens a `.blk` or `.txt` file and imports its shapes into the **Base Layer** on top of your current work (appending or replacing the Base Layer depending on the `Overlay:` selector in Panel 3) while keeping your Drawn Art intact.
+- **`Overlay .blk`**: Opens a `.blk` or `.txt` file and imports its shapes into the **Base Layer** on top of your current work (appending or replacing the Base Layer depending on the `Overlay:` selector in Panel 5) while keeping your Drawn Art intact.
 - **`Ref Image`**: Loads a reference image (`PNG`, `JPG`, `WebP`, `SVG`, etc.) onto the canvas behind your reticle shapes for manual tracing or automatic vectorization.
   - **Drag & Drop Anywhere**: You can also drag and drop a `.blk` file or an image directly onto the browser window. Dropping a single `.blk` opens it; dropping multiple `.blk` files adds all of them into the `sights/` dropdown and opens the first one; dropping an image loads it as the reference image.
 - **Undo / Redo (`↶` / `↷`)**: Steps backward or forward up to **50 history states** (`Ctrl+Z` / `Ctrl+Y` or `Ctrl+Shift+Z`).
-- **5 Preview Modes (`Day` / `Illum` / `Thermal` / `NVG` / `CAD`)**:
+- **6 Preview Modes (`Day` / `Illum` / `Thermal` / `NVG` / `CAD` / `Motion`)**:
   - **`Day`**: Daytime olive optic field using your configured `Day Color` (`crosshairColor`).
   - **`Illum`**: Night/dark optic view with backlit glow using your configured `Light Color` (`crosshairLightColor`, or red default).
-  - **`Thermal`**: White-hot thermal gunner sight preview.
-  - **`NVG`**: Green-phosphor night vision preview.
+  - **`Thermal`**: Thermal gunner sight preview honoring `Thermal Color` (`crosshairThermalColor`) and each HUD widget's `thermalColor` / `thermalTextColor`.
+  - **`NVG`**: Night-vision optic preview honoring `NVG Color` (`crosshairNvColor`) and each HUD widget's `nvColor` / `nightVisionTextColor`.
   - **`CAD`**: High-contrast dark slate blueprint view for crisp precision editing.
+  - **`Motion`**: Color-codes elements by range-adjustment behavior — **Static** (silver-white `#cbd5e1`), **Vertical `move:b`** (cyan `#38bdf8`), and **Radial `moveRadial:b` / `radial:b`** (magenta `#e879f9`) — with a live count legend in the top-right corner of the canvas.
 - **`PNG`**: Renders the current canvas (in whichever preview mode and zoom level is currently active) and downloads a `<sight_name>_preview.png` screenshot.
 - **`Raw .blk`**: Opens the **Raw War Thunder `.blk` Source** modal displaying the live serialized `.blk` text, line count, and KB size:
   - **Editable Textarea**: You can inspect or manually edit the raw `.blk` code directly.
   - **`Copy to Clipboard`**: Copies the serialized `.blk` text to your clipboard.
   - **`Download .blk`**: Downloads the exact text currently in the textarea as `<sight_name>.blk` (with any spaces replaced by `_`).
   - **`Apply Changes to Canvas`**: Re-parses your edited raw `.blk` text and updates the canvas immediately.
-- **`◎ Range Preview`**: Opens the interactive **Rangefinder & Circular Dial Simulator** floating bar above the viewport HUD so you can scrub (`0–4000 m`), auto-play (`▶`), choose shell velocities, simulate optic zoom (`0.50x–3.50x`), and watch circular rangefinders (`radial:b=yes`, `ballistics`, `moveRadial:b=yes`) and range ladders move live.
+- **`◎ Range Preview`**: Opens the interactive **Rangefinder & Circular Dial Simulator** floating bar above the viewport HUD so you can scrub (`0–4000 m`), auto-play (`▶`), choose shell velocities, simulate optic zoom (`0.50x–3.50x`), trigger **`⚡ RF / Reload`** (live laser rangefinding progress bar + gun reload countdown), and watch circular rangefinders (`radial:b=yes`, `ballistics`, `moveRadial:b=yes`) and range ladders move live.
 - **`? Guide`**: Opens a quick-reference help modal inside the app summarizing key workflows and War Thunder setup.
 - **`Save .blk`**: Exports the full `.blk` file (`Ctrl+S`). In supported browsers (Chrome/Edge/Brave), uses the native Save File Picker so you can overwrite or save straight into a local folder; otherwise downloads `<sight_name>.blk`. Spaces in suggested filenames are automatically replaced with `_`, and saving a filename that still contains spaces triggers a warning toast.
 
@@ -150,11 +154,10 @@ Because the editor runs 100% client-side in HTML5/CSS/JS, you can host the folde
   - **`Snap Vertex`**: Magnetically snaps pointer and dragged vertices to nearby existing shape endpoints and corners (`11px` snap radius; ignores the vertex's own shape when dragging an endpoint).
   - **`Show Grid`**: Displays/hides the background coordinate grid and `X=0` / `Y=0` axes.
   - **`Color Layers`**: Color-codes shapes by layer (`Base Layer` = Cyan `#38bdf8`, `Drawn Layer` = Green `#34d399`, `Selected` = Amber `#f59e0b`) regardless of preview mode so you can easily tell layers apart while editing.
+  - **`Color Motion`**: Color-codes shapes by motion type (**Static** vs **Vertical `move:b`** vs **Radial `moveRadial:b`**) in any preview mode and displays the live motion legend.
 - **`Grid Step`**: Coordinate spacing of major grid lines (`0.001` to `10`, default `0.025`; automatically doubles visually when zoomed way out so grid lines never clutter the screen).
 - **`Ticks`**: Toggles preview rendering of War Thunder's dynamic `crosshair_distances` tick marks and labels on canvas.
-- **`New: move:b=true`**: Sets whether newly drawn shapes automatically have `move:b=true` (moves vertically with range correction in-game).
-- **`mils`**: Sets whether newly drawn shapes are stored with `thousandth:b=true` coordinates (scaled by the active Mil Standard so elements scale with zoom FOV in-game).
-- **`radial`**: Sets whether newly drawn shapes attach `moveRadial:b=yes` so they rotate radially around `(0, 0)` with range adjustments.
+- **`Draw: move:b / mils / radial`**: Sets default CDK flags attached to drawn shapes: **`move:b`** (vertical ballistic drop tracking; mutually exclusive with `radial`), **`mils`** (`thousandth:b=true`), and **`radial`** (`moveRadial:b=yes`; mutually exclusive with `move:b`).
 - **Active Tool Options Box** (shows controls relevant to the active tool):
   - **Freehand (`B`)**:
     - **`Brush Output`**: `Optimized Lines (drawLines)`, `Thick Ribbon (drawQuads)`, or `Filled Closed Shape (drawQuads)`.
@@ -187,7 +190,25 @@ Create and edit historical TZF-style or modern circular rotating rangefinder sig
 
 ---
 
-### Panel 3: Ref Image & Pro Auto-Draw
+### Panel 3: Tank Sight Preset (HUD)
+Full visual editor for War Thunder `UserSights/tank_sight_presets/*.blk` HUD preset files:
+- **Export Format (`Classic Custom Sight` vs `HUD Preset (tank_sight_presets)`)**: Chooses whether `Save .blk` / `Raw .blk` exports a classic CDK sight (`drawLines{}`) or a clean `tank_sight_presets` preset file without polluting `drawLines` or `matchExpClass`.
+- **Quick HUD Preset Templates (`+ Apply`)**: One-click templates for **Pro Competitive HUD (All 5 Widgets)** (Day/Thermal green, Illum/NVG red-orange, blue `gunReady`, aligned RF/Ready row, `reticle` overrides enabled) and **Minimal Custom HUD (Default)**.
+- **Linked Reticle (`crosshair:t`) & Backdrop**:
+  - Edit `crosshair:t="..."` (with autocomplete suggestions from classic sights in `sights/`) or click **`Load Backdrop .blk`** to preview any custom `.blk` reticle directly behind the HUD widgets with live **Range Preview** and **`reticle` overrides**.
+  - **`Dist Offset` (`shotDistScaleOffset:i`)**: Shifts the ballistic distance scale horizontally.
+- **Reticle Overrides (`reticle {}`)**: Enable `Include` and `overridden:b`, and adjust **`lineWidth:r`** (`lineW`) and **`fontSize:r`** (`fontS`) with live canvas scaling.
+- **Live 1920x1080 HUD Overlay & Dragging (`Show HUD Overlay` / `Drag HUD`)**:
+  - Displays all enabled HUD widgets interactively on canvas. With **`Drag HUD`** enabled and the Select (`V`) tool active, drag any positioned widget directly on the canvas with **smart center/widget alignment snap guides** (hold **`Shift`** to axis-lock, **`Alt`** to temporarily suppress snapping, or use **Arrow Keys** / **`Shift+Arrow`** to nudge by `1px` / `10px`).
+- **5-Widget Inspector (`RF` / `Turret` / `FOV` / `Ready` / `Ammo`)**:
+  - Toggle **`Block`** (include/exclude block on export) and **`Visible`** (`visible:b`) per widget.
+  - Edit 1920x1080 **`HUD X / Y`** coordinates with **`X=960`**, **`Y=540`**, **`Mirror X`**, and **`Align RF/Ready`** quick alignment buttons, plus **`textSize:i`** and **`font:t`**.
+  - Widget-specific properties: **`rangefinder`** progress bar (`progressColor:c`, `progressBackgroundColor:c`), **`gunReady`** (`gunReadyMarkVisible:b`, `gunReadyReloadCountdownVisible:b`), and **`bulletType`** (`isShortName:b`).
+  - **4-Mode Per-Widget Palette (`Day` / `Illum` / `NVG` / `Thermal`)**: Customize foreground (`textColor` / `color`) and background (`bgColor`) RGBA colors independently for every optic mode, with **`Day → All Modes`**, **`Apply → All`**, and **`Match Reticle`** utilities.
+
+---
+
+### Panel 4: Ref Image & Pro Auto-Draw
 - **Image Loading & Placement**:
   - **`Load Image`**: Browse and load any `PNG`, `JPG`, `WebP`, or `SVG`.
   - **`Sample Art`**: Generates a built-in high-contrast 512x512 line-art crosshair/emblem test image so you can try Auto-Draw immediately without uploading a file.
@@ -221,7 +242,7 @@ Create and edit historical TZF-style or modern circular rotating rangefinder sig
 
 ---
 
-### Panel 3: Reticle Layers & Static Base
+### Panel 5: Reticle Layers & Static Base
 The editor manages two layers so you can modify or draw over existing sights safely:
 
 - **Base / Uploaded `.blk` Card** *(Blue dot, displays shape count)*:
@@ -246,7 +267,7 @@ The editor manages two layers so you can modify or draw over existing sights saf
 
 ---
 
-### Panel 4: Selection & CAD
+### Panel 6: Selection & CAD
 *(Active whenever 1 or more shapes are selected)*
 
 - **Header Badge**: Displays count of selected primitives.
@@ -256,11 +277,11 @@ The editor manages two layers so you can modify or draw over existing sights saf
 - **Symmetry**:
   - **`Mirror Copy X` / `Mirror Copy Y`**: Duplicates the selection mirrored across `X = 0` or `Y = 0`.
 - **CDK Per-Element Flags** *(applies to all selected elements)*:
-  - **`move:b`**: Toggles `move:b=true` (moves vertically with range correction).
+  - **`move:b`**: Toggles `move:b=true` (moves vertically with range correction; mutually exclusive with `moveRadial:b`).
   - **`thousandth:b`**: Toggles `thousandth:b=true` (uses mils/thousandth coordinate scaling).
   - **`highlight:b`**: Toggles `highlight:b=yes` (boosts illumination glow in-game).
 - **Circular Motion (`moveRadial`)**:
-  - Toggle **`moveRadial:b`**, edit **`Pivot X / Y` (`radialCenter`)**, **`Angle°` (`radialAngle`)**, and **`Speed` (`radialMoveSpeed`)**, or click **`Sync by Radius`** (`Rigid Mult × radius`) so multi-radius vector digits rotate rigidly as a single dial.
+  - Toggle **`moveRadial:b`** *(mutually exclusive with `move:b`)*, edit **`Pivot X / Y` (`radialCenter`)**, **`Angle°` (`radialAngle`)**, and **`Speed` (`radialMoveSpeed`)**, or click **`Sync by Radius`** (`Rigid Mult × radius`) so multi-radius vector digits rotate rigidly as a single dial.
   - Multi-selection automatically preserves differing `radialAngle` / `radialMoveSpeed` values (`Mixed` placeholder) unless explicitly overwritten.
 - **Exact Numeric Transforms**:
   - **`Shift dX / dY` + `Go`**: Translates selection by exact coordinates.
@@ -277,7 +298,7 @@ The editor manages two layers so you can modify or draw over existing sights saf
 
 ---
 
-### Panel 5: Sight Global Settings (CDK)
+### Panel 7: Sight Global Settings (CDK)
 Maps directly to War Thunder's top-level `.blk` header properties and blocks:
 - **`Central Vert` (`drawCentralLineVert:b`)**: Draws War Thunder's built-in full-height vertical central crosshair line.
 - **`Central Horz` (`drawCentralLineHorz:b`)**: Draws War Thunder's built-in full-width horizontal central crosshair line.
@@ -287,10 +308,13 @@ Maps directly to War Thunder's top-level `.blk` header properties and blocks:
 - **`Gun Correction` (`applyCorrectionToGun:b`)**: Controls whether zeroing elevates the gun (`yes`) or shifts aiming chevrons/ladders downward (`no`, used by TZF-style sights).
 - **`Mil Standard` (`thousandth:t`)**: Selects angular mil formula **`USSR (1/6000)`**, **`NATO (1/6400)`**, or **`Real (1/6283)`** (live canvas preview adjusts `thousandth:b=true` coordinates accordingly).
 - **`lineSizeMult`** & **`fontSizeMult`**: Global line thickness and text size multipliers used by War Thunder.
-- **`Day Color` (`crosshairColor:c`)** + Alpha (`0–255`): Base reticle color and opacity in Day mode.
-- **`Light Color` (`crosshairLightColor:c`)** + Alpha (`0–255`): Illuminated reticle color and opacity when sight lighting is turned on in-game (`Illum` preview mode).
-- **`matchExpClass (all_tanks)`**: Checkboxes for **`Tanks / MBT` (`exp_tank`)**, **`Heavy Tanks` (`exp_heavy_tank`)**, **`Tank Destroyers` (`exp_tank_destroyer`)**, and **`SPAA` (`exp_SPAA`)**. Included by default on new and exported `.blk` files so sights work in `UserSights/all_tanks/` as well as vehicle-specific folders.
-- **Preserved Advanced Properties**: Top-level blocks (such as `crosshair_distances`, `crosshair_hor_ranges`, HUD blocks) and CDK per-element radial properties (`moveRadial:b`, `radialCenter:p2`, `radialAngle:r`, `radialMoveSpeed:r`, `center:b`) found in existing `.blk` files are parsed and preserved cleanly on export.
+- **`Day Color` (`crosshairColor:c`)** + Alpha (`0–255`): Base reticle color and opacity in `Day` mode.
+- **`Light Color` (`crosshairLightColor:c`)** + Alpha (`0–255`): Illuminated reticle color and opacity in `Illum` mode.
+- **`NVG Color` (`crosshairNvColor:c`)** + Alpha (`0–255`): Night-vision optic reticle color and opacity in `NVG` mode.
+- **`Thermal Color` (`crosshairThermalColor:c`)** + Alpha (`0–255`): Thermal sight reticle color and opacity in `Thermal` mode.
+- **`Dist Offset` (`shotDistScaleOffset:i`)**: Horizontal pixel/scale offset for the ballistic distance scale (synced with Panel 3).
+- **`matchExpClass (all_tanks)`**: Checkboxes for **`Tanks / MBT` (`exp_tank`)**, **`Heavy Tanks` (`exp_heavy_tank`)**, **`Tank Destroyers` (`exp_tank_destroyer`)**, and **`SPAA` (`exp_SPAA`)**. Included by default on blank and exported classic `.blk` files so sights work in `UserSights/all_tanks/` as well as vehicle-specific folders.
+- **Preserved Advanced Properties**: Top-level blocks (such as `crosshair_distances`, `crosshair_hor_ranges`, `reticle`, HUD blocks) and CDK per-element radial properties (`moveRadial:b`, `radialCenter:p2`, `radialAngle:r`, `radialMoveSpeed:r`, `center:b`) found in existing `.blk` files are parsed and preserved cleanly on export.
 
 ---
 
@@ -312,12 +336,13 @@ Maps directly to War Thunder's top-level `.blk` header properties and blocks:
 | **`H`** | Pan tool |
 | **`Spacebar + Drag`** or **`Middle-Click + Drag`** | Pan viewport temporarily from any tool |
 | **`Mouse Wheel`** | Zoom in/out toward the cursor |
-| **`Shift + Click / Drag`** | Multi-select (`V`), keep aspect ratio on Scale handles (`V`), 15-degree snap on Rotate handles / Ref Image rotation / `L` / `P` / `S`, force Square (`R`), or interactive Stamp rotation (`G`) |
+| **`Shift + Click / Drag`** | Multi-select (`V`), keep aspect ratio on Scale handles (`V`), axis-lock dragged HUD widgets (`V`), 15-degree snap on Rotate handles / Ref Image rotation / `L` / `P` / `S`, force Square (`R`), or interactive Stamp rotation (`G`) |
+| **`Alt + Drag`** | Temporarily bypass snap alignment guides while dragging a HUD widget |
 | **`Double-Click`** | Finish `Polyline` / `Spline` / `Polygon`; with `Select (V)`, double-click a **line** to select its connected chain or double-click **text** to edit |
 | **`Enter`** | Finish active `Polyline` / `Spline` / `Polygon`, or confirm Text input |
 | **`Escape`** | Close Raw `.blk` modal or Text popover, cancel active polyline/pending line start, or clear selection |
-| **`Arrow Keys`** | Nudge selected shapes by `0.0025` units |
-| **`Shift + Arrow Keys`** | Nudge selected shapes by `0.02` units |
+| **`Arrow Keys`** | Nudge selected shapes by `0.0025` units (or selected HUD widget by `1px` when `Drag HUD` is active) |
+| **`Shift + Arrow Keys`** | Nudge selected shapes by `0.02` units (or selected HUD widget by `10px`) |
 | **`Ctrl + Z`** | Undo |
 | **`Ctrl + Y`** or **`Ctrl + Shift + Z`** | Redo |
 | **`Ctrl + C` / `Ctrl + V`** | Copy / Paste selected shapes (pastes onto Drawn layer) |
@@ -330,19 +355,25 @@ Maps directly to War Thunder's top-level `.blk` header properties and blocks:
 
 ## 7. Step-by-Step Workflows
 
-### Workflow 1: Drawing Custom Art Over an Existing Sight or Dynamic Preset
+### Workflow 1: Drawing Custom Art Over an Existing Sight
 1. Pick any sight from the **`sights/`** dropdown (or click **`Overlay .blk`** / **`Open .blk`**).
-   - If it is a dynamic HUD preset, its static crosshair, range scale, and HUD indicators are automatically synthesized onto the **Base Layer**.
-2. In **Panel 3 (Reticle Layers & Static Base)**, click **`🔒`** on the **Base Layer** so you cannot accidentally move or erase it. *(Optional: toggle **`Color Layers`** in Panel 1 to see Base in Cyan and Drawn Art in Green).*
+   - Classic presets synthesize static crosshair and range scale guides onto the **Base Layer** (and using **Overlay .blk** on a HUD preset similarly generates wireframe guides in Base).
+2. In **Panel 5 (Reticle Layers & Static Base)**, click **`🔒`** on the **Base Layer** so you cannot accidentally move or erase it. *(Optional: toggle **`Color Layers`** in Panel 1 to see Base in Cyan and Drawn Art in Green).*
 3. Draw using the left toolbar (`L`, `S`, `B`, `Q`, `G`, `T`) or use **Pro Auto-Draw** to trace a reference image onto the **Drawn Layer**.
 4. Keep **`Include Base in Export`** checked if you want both combined, or uncheck it to export *only* your custom Drawn overlay, then click **`Save .blk`**.
 
 ### Workflow 2: Converting an Image / Drawing Automatically with Auto-Draw
 1. Click **`Ref Image`** in the top bar (or drag-and-drop a `PNG`/`JPG`/`WebP`/`SVG` onto the canvas).
-2. In **Panel 2 (Ref Image & Pro Auto-Draw)**, check **`Move / Resize Image Directly on Canvas`** and position the image inside the **16:9 viewport** where you want it to appear in-game. Uncheck when positioned.
+2. In **Panel 4 (Ref Image & Pro Auto-Draw)**, check **`Move / Resize Image Directly on Canvas`** and position the image inside the **16:9 viewport** where you want it to appear in-game. Uncheck when positioned.
 3. Choose **`Smart Line Art`** for clean line drawings/characters (or **`Hybrid Art`** if you also want dark regions filled with quads, or **`Crisp Contours`** for solid logos).
 4. Adjust **`Sensitivity`**, **`Contrast Boost`**, and **`Curve Smoothing`** while watching the real-time cyan preview overlay. *(If your image uses bright lines on a dark background, enable **`Invert B/W`**).*
 5. Click **`Auto-Draw Image → Reticle`**. If total primitives get high, use **Sight Optimizer & Complexity** (`Detail Kept` + **`Optimize Sight`**) to reduce segment count smoothly without losing silhouette accuracy.
+
+### Workflow 3: Building or Editing a Tank Sight HUD Preset (`tank_sight_presets`)
+1. Open an existing preset from `UserSights/tank_sight_presets/` via **`Open .blk`** (or choose a quick template in **Panel 3: Tank Sight Preset (HUD)** and click **`+ Apply`**).
+2. Type the custom sight filename (without `.blk`) in **`crosshair:t`**, or click **`Load Backdrop .blk`** to render your custom reticle directly underneath the HUD elements.
+3. Adjust **`reticle {}`** thickness/font overrides and toggle **`Drag HUD`** to drag **`RF`**, **`Turret`**, **`Ready`**, and **`Ammo`** into exact 1920x1080 positions with live snap guides.
+4. Configure per-mode colors (**Day** / **Illum** / **NVG** / **Thermal**), toggle the top-bar optic preview modes to inspect contrast, and open **`◎ Range Preview`** → **`⚡ RF / Reload`** to simulate live rangefinding & reload countdowns before clicking **`Save .blk`**.
 
 ---
 
@@ -356,6 +387,8 @@ Maps directly to War Thunder's top-level `.blk` header properties and blocks:
    - **For ALL ground vehicles at once**:
      `C:\Users\<username>\Documents\My Games\WarThunder\Saves\<player-ID>\production\UserSights\all_tanks\<sight-name>.blk`
      *(Make sure the vehicle classes you want are checked under **`matchExpClass (all_tanks)`** in **Sight Global Settings (CDK)**; all four are enabled by default).*
+   - **For a Tank Sight HUD Preset (`HUD Preset` export mode)**:
+     `C:\Users\<username>\Documents\My Games\WarThunder\Saves\<player-ID>\production\UserSights\tank_sight_presets\<preset-name>.blk`
 3. Open War Thunder (or reboot/restart the game if it was already running), go to **Options → Main Parameters → Common Battle Settings → Sight Settings** (or **Grid sight**), and select your custom sight from the dropdown!
 
 ---

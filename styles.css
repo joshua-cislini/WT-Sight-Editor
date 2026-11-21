@@ -303,7 +303,10 @@ select,
   background-repeat: no-repeat;
   background-position: right 8px center;
   background-size: 10px;
+  white-space: nowrap;
+  overflow: hidden;
   text-overflow: ellipsis;
+  max-width: 100%;
 }
 
 select option {
@@ -758,8 +761,63 @@ input[type="color"]:hover {
   padding: 5px 10px;
   border-radius: var(--radius-sm);
   pointer-events: none;
-  max-width: calc(100% - 24px);
+  max-width: calc(100% - 265px);
   box-shadow: var(--shadow-overlay);
+}
+
+.motion-legend {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 16;
+  background: rgba(13, 14, 17, 0.90);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: var(--radius-sm);
+  padding: 5px 10px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  box-shadow: var(--shadow-overlay);
+  pointer-events: none;
+}
+
+.motion-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.motion-legend-item .mono {
+  color: var(--text-main);
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.06);
+  padding: 0 5px;
+  border-radius: 99px;
+  font-size: 10px;
+}
+
+.motion-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.motion-dot.static {
+  background: #cbd5e1;
+}
+
+.motion-dot.vertical {
+  background: #38bdf8;
+}
+
+.motion-dot.radial {
+  background: #e879f9;
 }
 
 .viewport-hud {
@@ -825,6 +883,12 @@ input[type="color"]:hover {
 .hud-btn:hover {
   background: rgba(255, 255, 255, 0.07);
   color: var(--text-main);
+}
+
+.hud-btn.active {
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
+  color: var(--accent);
 }
 
 /* Floating Rangefinder Preview Bar */
@@ -1142,7 +1206,8 @@ input[type="color"]:hover {
   min-width: 60px;
 }
 
-.field-row select {
+.field-row select,
+.field-row input[type="text"] {
   flex: 1;
   min-width: 0;
 }
@@ -1407,6 +1472,86 @@ input[type="color"]:hover {
   padding: 0 22px 0 7px !important;
   font-size: 11px !important;
   background-position: right 6px center !important;
+}
+
+/* Tank Sight HUD Preset Editor */
+.hud-preset-warn {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: rgba(242, 201, 76, 0.07);
+  border: 1px solid rgba(242, 201, 76, 0.25);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+
+.hud-widget-tabs,
+.hud-mode-tabs {
+  display: grid;
+  gap: 3px;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 2px;
+}
+
+.hud-widget-tabs {
+  grid-template-columns: repeat(5, 1fr);
+}
+
+.hud-mode-tabs {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.hud-widget-tab,
+.hud-mode-tab {
+  height: 25px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  border-radius: calc(var(--radius-sm) - 2px);
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 0 4px;
+  transition: background var(--fast) var(--ease), color var(--fast) var(--ease), border-color var(--fast) var(--ease);
+}
+
+.hud-widget-tab:hover,
+.hud-mode-tab:hover {
+  color: var(--text-main);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.hud-widget-tab.active,
+.hud-mode-tab.active {
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
+  color: var(--accent);
+}
+
+.hud-widget-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(148, 163, 184, 0.3);
+  flex-shrink: 0;
+}
+
+.hud-widget-tab.included .hud-widget-dot {
+  background: #f59e0b;
+}
+
+.hud-widget-tab.included.visible .hud-widget-dot {
+  background: #34d399;
 }
 
 /* Complexity Meter */

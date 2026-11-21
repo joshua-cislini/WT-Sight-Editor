@@ -56,10 +56,10 @@
       <div class="topbar-group file-group">
         <label class="inline-label" for="presetSelect">sights/</label>
         <select id="presetSelect" class="select-ctrl" title="Auto-discovered sights from sights/ folder"></select>
-        <button id="btnRefreshSights" class="btn btn-icon" title="Rescan sights/ folder for newly added .blk files">↻</button>
+        <button id="btnRefreshSights" class="btn btn-icon" title="Rescan sights/ folder for added .blk files">↻</button>
         <button id="btnLinkSightsFolder" class="btn btn-ghost btn-sm" title="Link your sights/ folder for direct browser live-scanning &amp; saving">📁 Link sights/</button>
         <input type="file" id="dirInputSights" webkitdirectory directory multiple hidden />
-        <button id="btnNewBlank" class="btn btn-ghost btn-sm" title="Create a new blank custom sight">New</button>
+        <button id="btnNewBlank" class="btn btn-ghost btn-sm" title="Create a blank custom sight">Blank</button>
         <div class="v-sep"></div>
         <button id="btnOpenBlk" class="btn btn-secondary btn-sm" title="Open any .blk file from disk">Open .blk</button>
         <button id="btnImportOverlay" class="btn btn-secondary btn-sm" title="Import another .blk sight into Base Layer to draw art over it">Overlay .blk</button>
@@ -89,6 +89,7 @@
           <button class="mode-btn" data-mode="thermal" title="White-Hot Thermal Preview">Thermal</button>
           <button class="mode-btn" data-mode="nvg" title="Green Phosphor NVG Preview">NVG</button>
           <button class="mode-btn" data-mode="blueprint" title="High-Contrast Dark CAD Blueprint View">CAD</button>
+          <button class="mode-btn" data-mode="motion" title="Color-code elements by motion: Static vs Vertical (move:b) vs Radial (moveRadial)">Motion</button>
         </div>
         <div class="v-sep"></div>
         <button id="btnRangePreview" class="btn btn-secondary btn-sm" title="Simulate War Thunder Rangefinder &amp; Circular Distance Control (0–4000m)">◎ Range Preview</button>
@@ -238,6 +239,18 @@
           Click or drag to select • Shift+Click multi-select • Drag handles to resize/rotate • Arrow keys to nudge
         </div>
 
+        <div class="motion-legend" id="motionLegend" hidden>
+          <span class="motion-legend-item" title="Static elements (stay still)">
+            <span class="motion-dot static"></span>Static <span class="mono" id="cntMotionStatic">0</span>
+          </span>
+          <span class="motion-legend-item" title="Vertical linear motion (move:b=true)">
+            <span class="motion-dot vertical"></span>Vertical <span class="mono" id="cntMotionVert">0</span>
+          </span>
+          <span class="motion-legend-item" title="Circular radial motion (moveRadial:b=yes / radial:b=yes)">
+            <span class="motion-dot radial"></span>Radial <span class="mono" id="cntMotionRadial">0</span>
+          </span>
+        </div>
+
         <div class="drop-overlay" id="dropOverlay" hidden>
           <div class="drop-box">
             <strong>Drop .blk Sight or Reference Image</strong>
@@ -291,6 +304,7 @@
               <input type="checkbox" id="chkPreviewGuides" checked />
               <span>Guides</span>
             </label>
+            <button id="btnRangeSimHud" class="hud-btn" title="Simulate laser rangefinder progress bar and gun reload countdown">⚡ RF / Reload</button>
           </div>
         </div>
 
@@ -336,9 +350,13 @@
                 <input type="checkbox" id="chkShowGrid" checked />
                 <span>Show Grid</span>
               </label>
-              <label class="toggle-chip" title="Color-code Base Layer (Cyan) vs Drawn Art (Green) for easy editing">
+              <label class="toggle-chip" title="Color-code Base Layer (Blue) vs Drawn Art (Green) for easy editing">
                 <input type="checkbox" id="chkColorLayers" />
                 <span>Color Layers</span>
+              </label>
+              <label class="toggle-chip" title="Color-code shapes by motion type: Static (White), Vertical move:b (Cyan), Radial moveRadial (Magenta)">
+                <input type="checkbox" id="chkColorMotion" />
+                <span>Color Motion</span>
               </label>
             </div>
 
@@ -352,15 +370,16 @@
             </div>
 
             <div class="field-row">
-              <label title="New shapes move vertically with range correction (move:b=true)">
+              <span class="muted-note" style="font-size:11px;min-width:34px">Draw:</span>
+              <label title="Drawn shapes move vertically with range correction (move:b=true; mutually exclusive with radial)">
                 <input type="checkbox" id="chkDefaultMove" />
-                <span>New: move:b=true</span>
+                <span>move:b</span>
               </label>
-              <label title="New shapes use thousandths/mils coordinates (thousandth:b=true)">
+              <label title="Drawn shapes use thousandths/mils coordinates (thousandth:b=true)">
                 <input type="checkbox" id="chkDefaultThousandth" />
                 <span>mils</span>
               </label>
-              <label title="New shapes rotate radially around (0,0) with range adjustment (moveRadial:b=yes)">
+              <label title="Drawn shapes rotate radially around (0,0) with range adjustment (moveRadial:b=yes; mutually exclusive with move:b)">
                 <input type="checkbox" id="chkDefaultMoveRadial" />
                 <span>radial</span>
               </label>
@@ -569,6 +588,199 @@
             <div class="btn-row">
               <button id="btnAddRadialPointer" class="btn btn-xs btn-secondary" title="Add fixed 12 o'clock aiming triangle pointer">+ Index Pointer</button>
               <button id="btnBakeRadialShapes" class="btn btn-xs btn-ghost" title="Convert active radial scale into editable moveRadial vector elements">Bake → Editable Shapes</button>
+            </div>
+          </div>
+        </details>
+
+        <!-- 3. Tank Sight Preset (HUD Widgets & Reticle Overrides) -->
+        <details class="panel" id="hudPresetPanel">
+          <summary class="panel-header">
+            <span>Tank Sight Preset (HUD)</span>
+            <span class="badge mono" id="hudPresetStatusBadge">CLASSIC</span>
+          </summary>
+          <div class="panel-body">
+            <div class="field-row">
+              <label for="selDocType">Export Format</label>
+              <select id="selDocType" title="Choose Classic Custom Sight (drawLines) or HUD Preset (tank_sight_presets/*.blk)">
+                <option value="sight">Classic Custom Sight (UserSights)</option>
+                <option value="hud_preset">HUD Preset (tank_sight_presets)</option>
+              </select>
+            </div>
+
+            <div class="sub-box">
+              <div class="sub-title">Quick HUD Preset Templates</div>
+              <div class="field-row">
+                <select id="selHudPresetTemplate" title="Choose a HUD preset starting layout">
+                  <option value="pro">Pro Competitive HUD (All 5 Widgets)</option>
+                  <option value="minimal">Minimal Custom HUD (Default)</option>
+                </select>
+                <button id="btnBuildHudPreset" class="btn btn-xs btn-secondary" title="Create or reset workspace with this HUD preset template">+ Apply</button>
+              </div>
+            </div>
+
+            <div class="hud-preset-warn" id="hudVectorExportHint" hidden>
+              <span>HUD Preset exports <code>tank_sight_presets</code> config without <code>drawLines</code>.</span>
+              <button id="btnConvertToClassicSight" class="btn btn-xs btn-secondary">Switch to Classic Sight</button>
+            </div>
+
+            <div class="sub-box">
+              <div class="sub-title">Linked Reticle (crosshair:t) &amp; Backdrop</div>
+              <div class="field-row">
+                <label for="inpCrosshairPreset">crosshair:t</label>
+                <input type="text" id="inpCrosshairPreset" list="crosshairPresetList" value="Default_Sight" placeholder="Default_Sight" title="Sight filename referenced by this preset (without .blk)" />
+                <datalist id="crosshairPresetList">
+                  <option value="Default_Sight"></option>
+                  <option value="ariete"></option>
+                </datalist>
+              </div>
+              <div class="btn-row">
+                <button id="btnLoadHudBackdrop" class="btn btn-xs btn-secondary" title="Load a local .blk custom sight file to preview underneath HUD widgets">Load Backdrop .blk</button>
+                <button id="btnClearHudBackdrop" class="btn btn-xs btn-ghost" title="Clear custom backdrop override and auto-resolve from catalog">Reset</button>
+                <input type="file" id="fileHudBackdrop" accept=".blk,.txt" hidden />
+              </div>
+              <div class="muted-note" id="hudBackdropStatus">Backdrop: Built-in Standard Sight</div>
+              <div class="field-row">
+                <label for="numShotDistOffset" title="shotDistScaleOffset:i: Horizontal offset of the distance scale">Dist Offset</label>
+                <input type="number" id="numShotDistOffset" value="0" step="1" />
+              </div>
+            </div>
+
+            <div class="sub-box">
+              <div class="sub-header-row">
+                <span class="sub-title">Reticle Overrides (reticle {})</span>
+                <label class="inline-check" title="Include reticle{} override block on export">
+                  <input type="checkbox" id="chkReticleInclude" />
+                  <span>Include</span>
+                </label>
+              </div>
+              <label class="toggle-chip full-width" title="overridden:b=yes: Override lineWidth and fontSize">
+                <input type="checkbox" id="chkReticleOverridden" />
+                <span>Override Reticle Thickness &amp; Font (overridden:b)</span>
+              </label>
+              <div class="field-row">
+                <label>lineW / fontS</label>
+                <div class="dual-inputs">
+                  <input type="number" id="numReticleLineWidth" value="0" min="0" max="10" step="0.1" title="reticle lineWidth:r" />
+                  <input type="number" id="numReticleFontSize" value="0.7" min="0.1" max="5" step="0.05" title="reticle fontSize:r" />
+                </div>
+              </div>
+            </div>
+
+            <div class="toggle-grid">
+              <label class="toggle-chip" title="Display live 1920x1080 HUD widgets overlay on canvas">
+                <input type="checkbox" id="chkShowHudOverlay" checked />
+                <span>Show HUD Overlay</span>
+              </label>
+              <label class="toggle-chip" title="Drag HUD widgets directly on the canvas with Select tool (V)">
+                <input type="checkbox" id="chkHudEditOnCanvas" />
+                <span>Drag HUD</span>
+              </label>
+            </div>
+
+            <div class="hud-widget-tabs" role="tablist" aria-label="HUD Widgets">
+              <button type="button" class="hud-widget-tab active" data-hud-widget="rangefinder" title="Rangefinder Readout &amp; Progress Bar"><span class="hud-widget-dot"></span>RF</button>
+              <button type="button" class="hud-widget-tab" data-hud-widget="turret" title="Hull / Turret Orientation Indicator"><span class="hud-widget-dot"></span>Turret</button>
+              <button type="button" class="hud-widget-tab" data-hud-widget="fov" title="Optical Zoom FOV Frame Brackets"><span class="hud-widget-dot"></span>FOV</button>
+              <button type="button" class="hud-widget-tab" data-hud-widget="gunReady" title="Breech Ready Mark &amp; Reload Countdown"><span class="hud-widget-dot"></span>Ready</button>
+              <button type="button" class="hud-widget-tab" data-hud-widget="bulletType" title="Selected Shell Type Readout"><span class="hud-widget-dot"></span>Ammo</button>
+            </div>
+
+            <div class="sub-box" id="hudWidgetEditor">
+              <div class="sub-header-row">
+                <span class="sub-title" id="lblHudWidgetTitle">rangefinder</span>
+                <div class="btn-row" style="gap: 8px;">
+                  <label class="inline-check" title="Include this block in exported .blk">
+                    <input type="checkbox" id="chkHudWidgetIncluded" />
+                    <span>Block</span>
+                  </label>
+                  <label class="inline-check" title="visible:b=yes/no">
+                    <input type="checkbox" id="chkHudWidgetVisible" checked />
+                    <span>Visible</span>
+                  </label>
+                </div>
+              </div>
+
+              <div id="hudWidgetPosBox">
+                <div class="field-row">
+                  <label>HUD X / Y</label>
+                  <div class="dual-inputs">
+                    <input type="number" id="numHudPosX" value="1024.5" min="0" max="1920" step="0.25" title="1920px virtual X coordinate" />
+                    <input type="number" id="numHudPosY" value="549.75" min="0" max="1080" step="0.25" title="1080px virtual Y coordinate" />
+                  </div>
+                </div>
+                <div class="btn-row">
+                  <button type="button" id="btnHudCenterX" class="btn btn-xs btn-ghost" title="Center horizontally (X = 960)">X=960</button>
+                  <button type="button" id="btnHudCenterY" class="btn btn-xs btn-ghost" title="Center vertically (Y = 540)">Y=540</button>
+                  <button type="button" id="btnHudMirrorX" class="btn btn-xs btn-ghost" title="Mirror X across center (1920 - X)">Mirror X</button>
+                  <button type="button" id="btnHudSyncRfReadyY" class="btn btn-xs btn-ghost" title="Align Rangefinder &amp; GunReady Y coordinate">Align RF/Ready</button>
+                </div>
+              </div>
+
+              <div id="hudWidgetFontBox">
+                <div class="field-row">
+                  <label>Size / Font</label>
+                  <div class="dual-inputs">
+                    <input type="number" id="numHudTextSize" value="20" min="8" max="72" step="1" title="textSize:i" />
+                    <input type="text" id="inpHudFont" value="hud" placeholder="hud" title="font:t" />
+                  </div>
+                </div>
+              </div>
+
+              <div id="hudGunReadyOpts" class="toggle-grid" hidden>
+                <label class="toggle-chip" title="gunReadyMarkVisible:b">
+                  <input type="checkbox" id="chkHudGunReadyMark" checked />
+                  <span>Ready Mark</span>
+                </label>
+                <label class="toggle-chip" title="gunReadyReloadCountdownVisible:b">
+                  <input type="checkbox" id="chkHudGunReadyCountdown" checked />
+                  <span>Reload Timer</span>
+                </label>
+              </div>
+
+              <div id="hudBulletTypeOpts" hidden>
+                <label class="toggle-chip full-width" title="isShortName:b=yes displays abbreviated shell codes (APFSDS / APCBC)">
+                  <input type="checkbox" id="chkHudBulletShortName" />
+                  <span>Abbreviated Shell Name (isShortName:b)</span>
+                </label>
+              </div>
+
+              <div id="hudRangefinderOpts" hidden>
+                <div class="field-row">
+                  <label for="colHudRfProg">Prog Fill</label>
+                  <input type="color" id="colHudRfProg" value="#ffff00" />
+                  <input type="range" id="rngHudRfProgAlpha" min="0" max="255" value="255" title="Progress fill alpha (0-255)" />
+                </div>
+                <div class="field-row">
+                  <label for="colHudRfProgBg">Prog BG</label>
+                  <input type="color" id="colHudRfProgBg" value="#000000" />
+                  <input type="range" id="rngHudRfProgBgAlpha" min="0" max="255" value="0" title="Progress background alpha (0-255)" />
+                </div>
+              </div>
+
+              <div class="hud-mode-tabs" role="tablist" aria-label="Widget Color Mode">
+                <button type="button" class="hud-mode-tab active" data-hud-color-mode="day">Day</button>
+                <button type="button" class="hud-mode-tab" data-hud-color-mode="light">Illum</button>
+                <button type="button" class="hud-mode-tab" data-hud-color-mode="nvg">NVG</button>
+                <button type="button" class="hud-mode-tab" data-hud-color-mode="thermal">Thermal</button>
+              </div>
+
+              <div class="field-row">
+                <label for="colHudFg" id="lblHudFgColor">Text Color</label>
+                <input type="color" id="colHudFg" value="#00ff3c" />
+                <input type="range" id="rngHudFgAlpha" min="0" max="255" value="255" title="Foreground alpha (0-255)" />
+              </div>
+
+              <div class="field-row" id="hudWidgetBgRow">
+                <label for="colHudBg">BG Color</label>
+                <input type="color" id="colHudBg" value="#000000" />
+                <input type="range" id="rngHudBgAlpha" min="0" max="255" value="0" title="Background alpha (0-255)" />
+              </div>
+
+              <div class="btn-row">
+                <button type="button" id="btnHudCopyDayToModes" class="btn btn-xs btn-ghost" title="Copy this widget's Day color to Illum, NVG, and Thermal">Day → All Modes</button>
+                <button type="button" id="btnHudApplyColorsAllWidgets" class="btn btn-xs btn-ghost" title="Apply this widget's 4-mode palette to all other HUD widgets">Apply → All</button>
+                <button type="button" id="btnHudMatchReticleColors" class="btn btn-xs btn-ghost" title="Copy header Reticle Day/Illum/NVG/Thermal colors onto this widget">Match Reticle</button>
+              </div>
             </div>
           </div>
         </details>
@@ -965,6 +1177,20 @@
               <input type="color" id="colLight" value="#ff4040" />
               <input type="range" id="rngLightAlpha" min="0" max="255" value="255" title="Alpha (0-255)" />
             </div>
+            <div class="field-row">
+              <label for="colNv">NVG Color</label>
+              <input type="color" id="colNv" value="#6eff91" />
+              <input type="range" id="rngNvAlpha" min="0" max="255" value="255" title="Night Vision Alpha (0-255)" />
+            </div>
+            <div class="field-row">
+              <label for="colThermal">Thermal Color</label>
+              <input type="color" id="colThermal" value="#f2f8ff" />
+              <input type="range" id="rngThermalAlpha" min="0" max="255" value="255" title="Thermal Alpha (0-255)" />
+            </div>
+            <div class="field-row">
+              <label for="numGlobalDistOffset" title="shotDistScaleOffset:i: Distance scale horizontal offset">Dist Offset</label>
+              <input type="number" id="numGlobalDistOffset" value="0" step="1" />
+            </div>
             <div class="sub-box">
               <div class="sub-title" title="Required by War Thunder when placing sights in UserSights/all_tanks/">matchExpClass (all_tanks)</div>
               <div class="toggle-grid">
@@ -1028,27 +1254,32 @@
         <p style="margin: 0 0 12px; color: var(--text-muted);">
           The <code>sights/</code> folder includes ready-to-use example sights and acts as a live library. Drop any <code>.blk</code> file into <code>sights/</code> and run <code>Start-ReticleStudio.bat</code> (or click <strong>📁 Link sights/</strong> in the top bar) to auto-discover every sight in the dropdown.
         </p>
-        <h4 style="margin: 0 0 6px; color: var(--accent);">2. Drawing Over Existing Sights (Even Dynamic/HUD Sights)</h4>
+        <h4 style="margin: 0 0 6px; color: var(--accent);">2. Drawing Over Existing Sights</h4>
         <p style="margin: 0 0 12px; color: var(--text-muted);">
-          Select any sight from <code>sights/</code> or click <strong>Overlay .blk</strong>. Dynamic HUD presets automatically have their static crosshair &amp; range scale synthesized into the <strong>Base Layer</strong>. Lock the Base Layer (<strong>🔒</strong>) and draw your custom artwork on the <strong>Drawn Art Overlay</strong> layer!
+          Select any sight from <code>sights/</code> or click <strong>Overlay .blk</strong>. Classic preset files synthesize their static crosshair &amp; range scale into the <strong>Base Layer</strong>. Lock the Base Layer (<strong>🔒</strong>) and draw your custom artwork on the <strong>Drawn Art Overlay</strong> layer!
         </p>
-        <h4 style="margin: 0 0 6px; color: var(--accent);">3. Auto-Drawing Any Reference Image</h4>
+        <h4 style="margin: 0 0 6px; color: var(--accent);">3. Tank Sight HUD Presets (<code>tank_sight_presets</code>)</h4>
+        <p style="margin: 0 0 12px; color: var(--text-muted);">
+          Open any <code>tank_sight_presets/*.blk</code> file or use <strong>Tank Sight Preset (HUD)</strong> to customize <code>crosshair:t</code> (previewing any custom <code>.blk</code> backdrop underneath), <code>reticle</code> thickness/font overrides, 4-mode optic colors (Day/Illum/NVG/Thermal), and all 5 draggable 1920x1080 HUD widgets (<code>rangefinder</code>, <code>turret</code>, <code>fov</code>, <code>gunReady</code>, <code>bulletType</code>).
+        </p>
+        <h4 style="margin: 0 0 6px; color: var(--accent);">4. Auto-Drawing Any Reference Image</h4>
         <p style="margin: 0 0 12px; color: var(--text-muted);">
           Click <strong>Ref Image</strong> (or drag &amp; drop a PNG/JPG/WebP onto the canvas). In <strong>Ref Image &amp; Pro Auto-Draw</strong>, choose <strong>Smart Line Art</strong> for clean single-stroke outlines &amp; exact eye/shape borders, or <strong>Hybrid Art</strong> for lines + filled quads. Adjust <strong>Sensitivity</strong> while watching the cyan live preview, then click <strong>Auto-Draw Image → Reticle</strong>.
         </p>
-        <h4 style="margin: 0 0 6px; color: var(--accent);">4. Optimizing Sight Complexity</h4>
+        <h4 style="margin: 0 0 6px; color: var(--accent);">5. Optimizing Sight Complexity</h4>
         <p style="margin: 0 0 12px; color: var(--text-muted);">
           Use the <strong>Detail Kept (5%–99%)</strong> slider in <strong>Sight Optimizer &amp; Complexity</strong> to smoothly reduce line/quad counts while staying inside War Thunder's engine limits. Click <strong>↩ Undo Optimize</strong> anytime to restore full detail.
         </p>
-        <h4 style="margin: 0 0 6px; color: var(--accent);">5. Circular Rangefinders (TZF-Style Radial Dials) &amp; Range Preview</h4>
+        <h4 style="margin: 0 0 6px; color: var(--accent);">6. Circular Rangefinders (TZF-Style Radial Dials) &amp; Range Preview</h4>
         <p style="margin: 0 0 12px; color: var(--text-muted);">
-          Open <strong>Circular Rangefinder (Radial)</strong> in the right sidebar to build native War Thunder radial scales (<code>ballistics { bullet { radial:b=yes } }</code> or top-level <code>radial:b=yes</code>), or assign per-element <code>moveRadial:b=yes</code> under <strong>Selection &amp; CAD</strong>. Click <strong>◎ Range Preview</strong> in the top bar to scrub or animate 0–4000 m zeroing and optic zoom live.
+          Open <strong>Circular Rangefinder (Radial)</strong> in the right sidebar to build native War Thunder radial scales (<code>ballistics { bullet { radial:b=yes } }</code> or top-level <code>radial:b=yes</code>), or assign per-element <code>moveRadial:b=yes</code> under <strong>Selection &amp; CAD</strong>. Click <strong>◎ Range Preview</strong> in the top bar to scrub or animate 0–4000 m zeroing, optic zoom, and rangefinder/reload HUD simulation.
         </p>
-        <h4 style="margin: 0 0 6px; color: var(--accent);">6. Installing Your Sight &amp; Troubleshooting</h4>
+        <h4 style="margin: 0 0 6px; color: var(--accent);">7. Installing Your Sight &amp; Troubleshooting</h4>
         <p style="margin: 0; color: var(--text-muted);">
           Click <strong>Save .blk</strong> (make sure the sight filename <strong>has no spaces</strong>, e.g. <code>my_sight.blk</code>) and place it inside:<br/>
           • Specific vehicle: <code>C:\Users\&lt;username&gt;\Documents\My Games\WarThunder\Saves\&lt;player-ID&gt;\production\UserSights\&lt;tank-ID&gt;\&lt;sight-name&gt;.blk</code><br/>
           • All ground vehicles: <code>C:\Users\&lt;username&gt;\Documents\My Games\WarThunder\Saves\&lt;player-ID&gt;\production\UserSights\all_tanks\&lt;sight-name&gt;.blk</code><br/>
+          • Tank Sight HUD Preset: <code>C:\Users\&lt;username&gt;\Documents\My Games\WarThunder\Saves\&lt;player-ID&gt;\production\UserSights\tank_sight_presets\&lt;preset-name&gt;.blk</code><br/>
           <strong>Troubleshooting:</strong> <code>Alt + F9</code> to reload sights in-game most probably will not work (a long-standing War Thunder bug). <strong>Reboot the game</strong> after adding or editing a sight, and ensure the sight filename contains <strong>no spaces</strong>.
         </p>
       </div>
