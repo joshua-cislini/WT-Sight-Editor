@@ -1,3 +1,5 @@
+![https://live.warthunder.com/post/1196320/en/](https://cdn-live.warthunder.com/uploads/da/29/96/3aed6ab6e288b345016bcbbf3c558a93f6_mq/WhatsApp+Image+2026-11-21+at+23.00.38.jpg)
+
 # WT Reticle Studio Pro: War Thunder `.blk` Custom Sight & Art Editor
 
 **WT Reticle Studio Pro** is a zero-install, browser-based vector editor and auto-tracing studio for creating custom **War Thunder** tank sights (`.blk`), drawing custom artwork over existing sights (including modern dynamic HUD presets), and converting reference images or line art into War Thunder reticle geometry.
