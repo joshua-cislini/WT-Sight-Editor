@@ -96,6 +96,7 @@ Because the editor runs 100% client-side in HTML5/CSS/JS, you can host the folde
   - **`Copy to Clipboard`**: Copies the serialized `.blk` text to your clipboard.
   - **`Download .blk`**: Downloads the exact text currently in the textarea as `<sight_name>.blk` (with any spaces replaced by `_`).
   - **`Apply Changes to Canvas`**: Re-parses your edited raw `.blk` text and updates the canvas immediately.
+- **`◎ Range Preview`**: Opens the interactive **Rangefinder & Circular Dial Simulator** floating bar above the viewport HUD so you can scrub (`0–4000 m`), auto-play (`▶`), choose shell velocities, simulate optic zoom (`0.50x–3.50x`), and watch circular rangefinders (`radial:b=yes`, `ballistics`, `moveRadial:b=yes`) and range ladders move live.
 - **`? Guide`**: Opens a quick-reference help modal inside the app summarizing key workflows and War Thunder setup.
 - **`Save .blk`**: Exports the full `.blk` file (`Ctrl+S`). In supported browsers (Chrome/Edge/Brave), uses the native Save File Picker so you can overwrite or save straight into a local folder; otherwise downloads `<sight_name>.blk`. Spaces in suggested filenames are automatically replaced with `_`, and saving a filename that still contains spaces triggers a warning toast.
 
@@ -153,6 +154,7 @@ Because the editor runs 100% client-side in HTML5/CSS/JS, you can host the folde
 - **`Ticks`**: Toggles preview rendering of War Thunder's dynamic `crosshair_distances` tick marks and labels on canvas.
 - **`New: move:b=true`**: Sets whether newly drawn shapes automatically have `move:b=true` (moves vertically with range correction in-game).
 - **`mils`**: Sets whether newly drawn shapes are stored with `thousandth:b=true` coordinates (scaled by the active Mil Standard so elements scale with zoom FOV in-game).
+- **`radial`**: Sets whether newly drawn shapes attach `moveRadial:b=yes` so they rotate radially around `(0, 0)` with range adjustments.
 - **Active Tool Options Box** (shows controls relevant to the active tool):
   - **Freehand (`B`)**:
     - **`Brush Output`**: `Optimized Lines (drawLines)`, `Thick Ribbon (drawQuads)`, or `Filled Closed Shape (drawQuads)`.
@@ -174,7 +176,18 @@ Because the editor runs 100% client-side in HTML5/CSS/JS, you can host the folde
 
 ---
 
-### Panel 2: Ref Image & Pro Auto-Draw
+### Panel 2: Circular Rangefinder (Radial)
+Create and edit historical TZF-style or modern circular rotating rangefinder sights:
+- **`▶ Preview Circular Rangefinder`**: Opens and starts the **Range Preview** simulation bar so you can watch the circular dial rotate live.
+- **Quick Radial Sight Builder (`+ Build`)**: Generates ready-to-use **`TZF 12a Panther (Dot Ring)`**, **`TZF 9b Tiger (Dual Arc)`**, or **`Modern Radial Tick Dial (All Tanks)`** sights with `ballistics { bullet { ... } }` or top-level `radial:b=yes` settings.
+- **Scale Target (`Main Scale` or `Bullet #1..N`) + `+ Bullet` / `✕ Remove`**: Switch between the top-level `crosshair_distances` ring and per-shell `ballistics { bullet { ... } }` rings.
+- **Radial Options**: Toggle **`Circular (radial:b)`**, **`Dots (circleMode)`**, **`Clockwise (upward)`**, and **`Gun Corr.` (`applyCorrectionToGun`)**, and configure **`bulletType`**, **`Velocity (m/s)`**, **`Ring Radius`** (in `mils` or screen units), **`Angle° / Stretch`**, **`Center X / Y` (`distancePos`)**, and **`Label Offset` (`textPos`)**.
+- **Range Marks Generator**: Set **`Step`**, **`Max`**, and **`Labels`** interval and click **`Generate Distance Marks`** to populate `crosshair_distances`.
+- **`+ Index Pointer`** & **`Bake → Editable Shapes`**: Drop a fixed 12 o'clock aiming triangle pointer or bake any native radial scale into individual editable `moveRadial:b=yes` vector primitives.
+
+---
+
+### Panel 3: Ref Image & Pro Auto-Draw
 - **Image Loading & Placement**:
   - **`Load Image`**: Browse and load any `PNG`, `JPG`, `WebP`, or `SVG`.
   - **`Sample Art`**: Generates a built-in high-contrast 512x512 line-art crosshair/emblem test image so you can try Auto-Draw immediately without uploading a file.
@@ -246,6 +259,9 @@ The editor manages two layers so you can modify or draw over existing sights saf
   - **`move:b`**: Toggles `move:b=true` (moves vertically with range correction).
   - **`thousandth:b`**: Toggles `thousandth:b=true` (uses mils/thousandth coordinate scaling).
   - **`highlight:b`**: Toggles `highlight:b=yes` (boosts illumination glow in-game).
+- **Circular Motion (`moveRadial`)**:
+  - Toggle **`moveRadial:b`**, edit **`Pivot X / Y` (`radialCenter`)**, **`Angle°` (`radialAngle`)**, and **`Speed` (`radialMoveSpeed`)**, or click **`Sync by Radius`** (`Rigid Mult × radius`) so multi-radius vector digits rotate rigidly as a single dial.
+  - Multi-selection automatically preserves differing `radialAngle` / `radialMoveSpeed` values (`Mixed` placeholder) unless explicitly overwritten.
 - **Exact Numeric Transforms**:
   - **`Shift dX / dY` + `Go`**: Translates selection by exact coordinates.
   - **`Scale / Rot°` + `Go`**: Scales and rotates selection around its bounding-box center by exact values.
@@ -268,6 +284,7 @@ Maps directly to War Thunder's top-level `.blk` header properties and blocks:
 - **`Sight Mask` (`drawSightMask:b`)**: Enables the optic mask (and switches the canvas backdrop between framed optic mask and full-screen view).
 - **`Smooth Edge` (`useSmoothEdge:b`)**: Enables smooth anti-aliased sight mask edges in-game.
 - **`Range Readout` (`drawDistanceCorrection:b`)**: Enables/disables the in-game range correction text readout.
+- **`Gun Correction` (`applyCorrectionToGun:b`)**: Controls whether zeroing elevates the gun (`yes`) or shifts aiming chevrons/ladders downward (`no`, used by TZF-style sights).
 - **`Mil Standard` (`thousandth:t`)**: Selects angular mil formula **`USSR (1/6000)`**, **`NATO (1/6400)`**, or **`Real (1/6283)`** (live canvas preview adjusts `thousandth:b=true` coordinates accordingly).
 - **`lineSizeMult`** & **`fontSizeMult`**: Global line thickness and text size multipliers used by War Thunder.
 - **`Day Color` (`crosshairColor:c`)** + Alpha (`0–255`): Base reticle color and opacity in Day mode.

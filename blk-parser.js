@@ -36,10 +36,21 @@
       .filter((n) => Number.isFinite(n));
   }
 
+  function getCloseQuote(ch) {
+    if (ch === '"') return '"';
+    if (ch === "'") return "'";
+    if (ch === '\u201C') return '\u201D';
+    if (ch === '\u2018') return '\u2019';
+    return null;
+  }
+
   function unquote(val) {
     const s = String(val).trim();
-    if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
-      return s.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+    if (s.length >= 2) {
+      const close = getCloseQuote(s[0]);
+      if (close && (s.endsWith(close) || s.endsWith(s[0]))) {
+        return s.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+      }
     }
     return s;
   }
@@ -89,8 +100,9 @@
         i++;
         continue;
       }
-      if (ch === '"' || ch === "'") {
-        inQuote = ch;
+      const closeQ = getCloseQuote(ch);
+      if (closeQ) {
+        inQuote = closeQ;
         continue;
       }
       if (ch === '{') {
@@ -118,8 +130,9 @@
         if (ch === inQuote) inQuote = null;
         continue;
       }
-      if (ch === '"' || ch === "'") {
-        inQuote = ch;
+      const closeQ = getCloseQuote(ch);
+      if (closeQ) {
+        inQuote = closeQ;
         out += ch;
         continue;
       }
@@ -135,6 +148,45 @@
         continue;
       }
       out += ch;
+    }
+    return out;
+  }
+
+  function stripChildBlocks(body) {
+    const clean = stripComments(body);
+    let out = '';
+    let inQuote = null;
+    let i = 0;
+
+    while (i < clean.length) {
+      const ch = clean[i];
+      if (inQuote) {
+        out += ch;
+        if (ch === '\\' && i + 1 < clean.length) {
+          out += clean[++i];
+          i++;
+          continue;
+        }
+        if (ch === inQuote) inQuote = null;
+        i++;
+        continue;
+      }
+      const closeQ = getCloseQuote(ch);
+      if (closeQ) {
+        inQuote = closeQ;
+        out += ch;
+        i++;
+        continue;
+      }
+      if (ch === '{') {
+        // Strip preceding identifier token on the same statement
+        out = out.replace(/[a-zA-Z0-9_.]+\s*$/, '');
+        const endBrace = findMatchingBrace(clean, i);
+        i = endBrace + 1;
+        continue;
+      }
+      out += ch;
+      i++;
     }
     return out;
   }
@@ -156,8 +208,9 @@
         if (ch === inQuote) inQuote = null;
         continue;
       }
-      if (ch === '"' || ch === "'") {
-        inQuote = ch;
+      const closeQ = getCloseQuote(ch);
+      if (closeQ) {
+        inQuote = closeQ;
         current += ch;
         continue;
       }
@@ -259,7 +312,8 @@
             }
             if (ch === inQuote) inQuote = null;
           } else {
-            if (ch === '"' || ch === "'") inQuote = ch;
+            const closeQ = getCloseQuote(ch);
+            if (closeQ) inQuote = closeQ;
             else if (ch === '\n' || ch === ';') break;
             else if (ch === '/' && text[stmtEnd + 1] === '/') break;
           }
@@ -288,6 +342,7 @@
       drawCentralLineHorz: true,
       drawSightMask: true,
       useSmoothEdge: true,
+      applyCorrectionToGun: true,
       lineSizeMult: 1,
       fontSizeMult: 1,
       crosshairColor: { r: 0, g: 0, b: 0, a: 255 },
@@ -299,12 +354,65 @@
       drawDistanceCorrection: true,
       thousandth: false,
       thousandthMode: 'ussr',
+      radial: false,
+      circleMode: false,
+      drawUpward: false,
+      radialRadius: [70, 1],
+      radialAngle: 180,
+      radialStretch: 5,
+      distancePos: [0, 0],
+      distanceStretch: 1,
+      textPos: [0.015, 0],
+      textAlign: 0,
+      drawAdditionalLines: true,
       matchExpClass: {
         exp_tank: true,
         exp_heavy_tank: true,
         exp_tank_destroyer: true,
         exp_SPAA: true
       }
+    };
+  }
+
+  function createDefaultBullet(overrides = {}) {
+    return {
+      id: nextId('bullet'),
+      bulletType: 'apcbc_tank',
+      speed: 935,
+      radial: true,
+      circleMode: true,
+      drawUpward: true,
+      radialRadius: [70, 1],
+      radialAngle: 180,
+      radialStretch: 5,
+      distancePos: [0, 0],
+      distanceStretch: 1,
+      crosshairDistHorSizeMain: [0.001, 0.001],
+      crosshairDistHorSizeAdditional: [0.005, 0.003],
+      textPos: [0.015, 0],
+      textAlign: 0,
+      fontSizeMult: null,
+      drawAdditionalLines: false,
+      drawDistanceCorrection: false,
+      distanceCorrectionPos: [-0.2, -0.05],
+      distances: [
+        { dist: 200, major: 2, minor: 0 },
+        { dist: 400, major: 4, minor: 0 },
+        { dist: 600, major: 6, minor: 0 },
+        { dist: 800, major: 8, minor: 0 },
+        { dist: 1000, major: 10, minor: 0 },
+        { dist: 1200, major: 12, minor: 0 },
+        { dist: 1400, major: 14, minor: 0 },
+        { dist: 1600, major: 16, minor: 0 },
+        { dist: 1800, major: 18, minor: 0 },
+        { dist: 2000, major: 20, minor: 0 },
+        { dist: 2200, major: 22, minor: 0 },
+        { dist: 2400, major: 24, minor: 0 },
+        { dist: 2600, major: 26, minor: 0 },
+        { dist: 2800, major: 28, minor: 0 },
+        { dist: 3000, major: 30, minor: 0 }
+      ],
+      ...overrides
     };
   }
 
@@ -348,6 +456,7 @@
         { dist: 2000, major: 20, minor: 0 }
       ],
       horRanges: [],
+      ballistics: [],
       hudWidgets: {},
       preservedBlocks: [
         {
@@ -375,7 +484,14 @@
   function parseRadialAndExtraProps(props) {
     const out = {};
     if (props.highlight) out.highlight = parseBool(props.highlight.rawValue);
-    if (props.center) out.center = parseBool(props.center.rawValue);
+    if (props.center) {
+      if (props.center.type === 'p2' || props.center.rawValue.includes(',')) {
+        const cp = parseNums(props.center.rawValue);
+        if (cp.length >= 2) out.centerPos = [cp[0], cp[1]];
+      } else {
+        out.center = parseBool(props.center.rawValue);
+      }
+    }
     if (props.moveRadial) out.moveRadial = parseBool(props.moveRadial.rawValue);
     if (props.radialCenter) {
       const rc = parseNums(props.radialCenter.rawValue);
@@ -389,6 +505,11 @@
       const rs = parseFloat(props.radialMoveSpeed.rawValue);
       if (Number.isFinite(rs)) out.radialMoveSpeed = rs;
     }
+    if (props.radialRadius) {
+      const rr = parseNums(props.radialRadius.rawValue);
+      if (rr.length >= 1) out.radialRadius = [rr[0], rr[1] ?? 0];
+    }
+    if (props.drawUpward) out.drawUpward = parseBool(props.drawUpward.rawValue);
     return out;
   }
 
@@ -401,6 +522,7 @@
       header: createDefaultHeader(),
       distances: [],
       horRanges: [],
+      ballistics: [],
       hudWidgets: {},
       preservedBlocks: [],
       lines: [],
@@ -416,8 +538,9 @@
 
     for (const item of items) {
       if (item.kind === 'prop') {
-        doc.settings.push({ key: item.key, type: item.type, rawValue: item.rawValue });
-        applyHeaderProp(doc.header, item);
+        const settingObj = { key: item.key, type: item.type, rawValue: item.rawValue };
+        applyHeaderProp(doc.header, settingObj);
+        doc.settings.push(settingObj);
       } else if (item.kind === 'block') {
         if (!drawBlockNames.has(item.name)) {
           doc.preservedBlocks.push({ name: item.name, rawText: item.rawText });
@@ -425,6 +548,8 @@
             doc.distances = parseDistancesBlock(item.body);
           } else if (item.name === 'crosshair_hor_ranges') {
             doc.horRanges = parseHorRangesBlock(item.body);
+          } else if (item.name === 'ballistics') {
+            doc.ballistics = parseBallisticsBlock(item.body);
           } else if (item.name === 'matchExpClass') {
             const mp = parseKeyValueBody(item.body);
             doc.header.matchExpClass = {
@@ -532,9 +657,10 @@
     }
 
     // If this sight has no custom vector shapes yet (e.g., 4.blk [Standard], 5.blk [TEST/Ariete], or Default Sight),
-    // automatically synthesize its static crosshair, ballistic scale, and HUD elements into the base layer!
+    // automatically synthesize its static crosshair, ballistic scale, and HUD elements into the base layer,
+    // unless it defines a native radial scale or ballistics bullet blocks.
     const totalCustomShapes = doc.lines.length + doc.quads.length + doc.circles.length + doc.texts.length;
-    if (autoSynthesizeStatic && totalCustomShapes === 0 && (items.length > 0)) {
+    if (autoSynthesizeStatic && totalCustomShapes === 0 && items.length > 0 && !doc.header.radial && doc.ballistics.length === 0) {
       synthesizeStaticSightGeometry(doc, defaultLayer);
     }
 
@@ -744,6 +870,56 @@
       case 'useSmoothEdge':
         header.useSmoothEdge = parseBool(prop.rawValue);
         break;
+      case 'applyCorrectionToGun':
+        header.applyCorrectionToGun = parseBool(prop.rawValue);
+        break;
+      case 'radial':
+        header.radial = parseBool(prop.rawValue);
+        break;
+      case 'circleMode':
+        header.circleMode = parseBool(prop.rawValue);
+        break;
+      case 'drawUpward':
+        header.drawUpward = parseBool(prop.rawValue);
+        break;
+      case 'radialRadius': {
+        const v = parseNums(prop.rawValue);
+        if (v.length >= 1) header.radialRadius = [v[0], v[1] ?? 0];
+        break;
+      }
+      case 'radialAngle': {
+        const v = parseFloat(prop.rawValue);
+        if (Number.isFinite(v)) header.radialAngle = v;
+        break;
+      }
+      case 'radialStretch': {
+        const v = parseFloat(prop.rawValue);
+        if (Number.isFinite(v)) header.radialStretch = v;
+        break;
+      }
+      case 'distancePos': {
+        const v = parseNums(prop.rawValue);
+        if (v.length >= 2) header.distancePos = [v[0], v[1]];
+        break;
+      }
+      case 'distanceStretch': {
+        const v = parseFloat(prop.rawValue);
+        if (Number.isFinite(v)) header.distanceStretch = v;
+        break;
+      }
+      case 'textPos': {
+        const v = parseNums(prop.rawValue);
+        if (v.length >= 2) header.textPos = [v[0], v[1]];
+        break;
+      }
+      case 'textAlign': {
+        const v = parseInt(prop.rawValue, 10);
+        if (Number.isFinite(v)) header.textAlign = v;
+        break;
+      }
+      case 'drawAdditionalLines':
+        header.drawAdditionalLines = parseBool(prop.rawValue);
+        break;
       case 'lineSizeMult': {
         const v = parseFloat(prop.rawValue);
         if (Number.isFinite(v)) header.lineSizeMult = v;
@@ -790,10 +966,11 @@
       case 'thousandth':
         if (prop.type === 'b') {
           header.thousandth = parseBool(prop.rawValue);
-        } else if (prop.type === 't' || prop.rawValue.includes('"') || prop.rawValue.includes("'")) {
+        } else if (prop.type === 't' || /["'\u201C\u201D\u2018\u2019]/.test(prop.rawValue)) {
           const mode = unquote(prop.rawValue).toLowerCase();
           if (mode === 'ussr' || mode === 'nato' || mode === 'real') {
             header.thousandthMode = mode;
+            prop.rawValue = quoteStr(mode);
           }
         }
         break;
@@ -837,6 +1014,101 @@
       }
     }
     return out;
+  }
+
+  function parseBallisticsBlock(body) {
+    const bullets = [];
+    const childBlocks = extractChildBlocks(body, ['bullet']);
+    for (const b of childBlocks) {
+      const topOnly = stripChildBlocks(b.body);
+      const props = parseKeyValueBody(topOnly);
+      const distBlocks = extractChildBlocks(b.body, ['crosshair_distances']);
+      const distances = distBlocks.length > 0 ? parseDistancesBlock(distBlocks[0].body) : [];
+
+      const radialRadius = props.radialRadius ? parseNums(props.radialRadius.rawValue) : [70, 1];
+      const distancePos = props.distancePos ? parseNums(props.distancePos.rawValue) : [0, 0];
+      const mainSize = props.crosshairDistHorSizeMain ? parseNums(props.crosshairDistHorSizeMain.rawValue) : [0.001, 0.001];
+      const addSize = props.crosshairDistHorSizeAdditional ? parseNums(props.crosshairDistHorSizeAdditional.rawValue) : [0.005, 0.003];
+      const textPos = props.textPos ? parseNums(props.textPos.rawValue) : [0.015, 0];
+      const distCorrPos = props.distanceCorrectionPos ? parseNums(props.distanceCorrectionPos.rawValue) : [-0.2, -0.05];
+      const speedVal = props.speed ? parseFloat(props.speed.rawValue) : 900;
+      const radialAngleVal = props.radialAngle ? parseFloat(props.radialAngle.rawValue) : 180;
+      const radialStretchVal = props.radialStretch ? parseFloat(props.radialStretch.rawValue) : 1;
+      const distStretchVal = props.distanceStretch ? parseFloat(props.distanceStretch.rawValue) : 1;
+      const textAlignVal = props.textAlign ? parseInt(props.textAlign.rawValue, 10) : 0;
+      const fontMultVal = props.fontSizeMult ? parseFloat(props.fontSizeMult.rawValue) : null;
+
+      bullets.push({
+        id: nextId('bullet'),
+        bulletType: props.bulletType ? unquote(props.bulletType.rawValue) : 'apcbc_tank',
+        speed: Number.isFinite(speedVal) ? speedVal : 900,
+        radial: props.radial ? parseBool(props.radial.rawValue) : false,
+        circleMode: props.circleMode ? parseBool(props.circleMode.rawValue) : false,
+        drawUpward: props.drawUpward ? parseBool(props.drawUpward.rawValue) : true,
+        radialRadius: [radialRadius[0] ?? 70, radialRadius[1] ?? 1],
+        radialAngle: Number.isFinite(radialAngleVal) ? radialAngleVal : 180,
+        radialStretch: Number.isFinite(radialStretchVal) ? radialStretchVal : 1,
+        distancePos: [distancePos[0] ?? 0, distancePos[1] ?? 0],
+        distanceStretch: Number.isFinite(distStretchVal) ? distStretchVal : 1,
+        crosshairDistHorSizeMain: [mainSize[0] ?? 0.001, mainSize[1] ?? 0.001],
+        crosshairDistHorSizeAdditional: [addSize[0] ?? 0.005, addSize[1] ?? 0.003],
+        textPos: [textPos[0] ?? 0.015, textPos[1] ?? 0],
+        textAlign: Number.isFinite(textAlignVal) ? textAlignVal : 0,
+        fontSizeMult: Number.isFinite(fontMultVal) ? fontMultVal : null,
+        drawAdditionalLines: props.drawAdditionalLines ? parseBool(props.drawAdditionalLines.rawValue) : false,
+        drawDistanceCorrection: props.drawDistanceCorrection ? parseBool(props.drawDistanceCorrection.rawValue) : false,
+        distanceCorrectionPos: [distCorrPos[0] ?? -0.2, distCorrPos[1] ?? -0.05],
+        distances
+      });
+    }
+    return bullets;
+  }
+
+  function buildDistancesBlock(distances, indent = '') {
+    const out = [`${indent}crosshair_distances {`];
+    for (const d of (distances || [])) {
+      out.push(`${indent}  distance:p3 = ${formatNum(d.dist)}, ${formatNum(d.major || 0)}, ${formatNum(d.minor || 0)}`);
+    }
+    out.push(`${indent}}`);
+    return out.join('\n');
+  }
+
+  function buildBallisticsBlock(ballistics) {
+    if (!ballistics || ballistics.length === 0) return '';
+    const out = ['ballistics {'];
+    for (const b of ballistics) {
+      out.push('  bullet {');
+      out.push(`    bulletType:t = ${quoteStr(b.bulletType || 'apcbc_tank')}`);
+      out.push(`    speed:r = ${formatNum(b.speed || 935)}`);
+      out.push(`    drawAdditionalLines:b = ${b.drawAdditionalLines ? 'yes' : 'no'}`);
+      out.push(`    drawDistanceCorrection:b = ${b.drawDistanceCorrection ? 'yes' : 'no'}`);
+      const dcp = b.distanceCorrectionPos || [-0.2, -0.05];
+      out.push(`    distanceCorrectionPos:p2 = ${formatNum(dcp[0])}, ${formatNum(dcp[1])}`);
+      out.push(`    distanceStretch:r = ${formatNum(b.distanceStretch ?? 1)}`);
+      const dp = b.distancePos || [0, 0];
+      out.push(`    distancePos:p2 = ${formatNum(dp[0])}, ${formatNum(dp[1])}`);
+      const msz = b.crosshairDistHorSizeMain || [0.001, 0.001];
+      const asz = b.crosshairDistHorSizeAdditional || [0.005, 0.003];
+      out.push(`    crosshairDistHorSizeMain:p2 = ${formatNum(msz[0])}, ${formatNum(msz[1])}`);
+      out.push(`    crosshairDistHorSizeAdditional:p2 = ${formatNum(asz[0])}, ${formatNum(asz[1])}`);
+      const tp = b.textPos || [0.015, 0];
+      out.push(`    textPos:p2 = ${formatNum(tp[0])}, ${formatNum(tp[1])}`);
+      out.push(`    textAlign:i = ${Math.round(b.textAlign || 0)}`);
+      if (Number.isFinite(b.fontSizeMult) && b.fontSizeMult > 0) {
+        out.push(`    fontSizeMult:r = ${formatNum(b.fontSizeMult)}`);
+      }
+      out.push(`    drawUpward:b = ${b.drawUpward ? 'yes' : 'no'}`);
+      out.push(`    circleMode:b = ${b.circleMode ? 'yes' : 'no'}`);
+      out.push(`    radial:b = ${b.radial ? 'yes' : 'no'}`);
+      const rr = b.radialRadius || [70, 1];
+      out.push(`    radialRadius:p2 = ${formatNum(rr[0])}, ${formatNum(rr[1] ?? 1)}`);
+      out.push(`    radialAngle:r = ${formatNum(b.radialAngle ?? 180)}`);
+      out.push(`    radialStretch:r = ${formatNum(b.radialStretch ?? 5)}`);
+      out.push(buildDistancesBlock(b.distances || [], '    '));
+      out.push('  }');
+    }
+    out.push('}');
+    return out.join('\n');
   }
 
   function parseHudWidgetBlock(name, body) {
@@ -891,6 +1163,8 @@
       }
     }
 
+    const p2Str = (arr, defA = 0, defB = 0) => `${formatNum(arr?.[0] ?? defA)}, ${formatNum(arr?.[1] ?? defB)}`;
+
     const managed = [
       ['thousandth', 't', quoteStr(h.thousandthMode || 'ussr')],
       ['fontSizeMult', 'r', formatNum(h.fontSizeMult)],
@@ -899,9 +1173,23 @@
       ['drawCentralLineHorz', 'b', h.drawCentralLineHorz ? 'yes' : 'no'],
       ['drawSightMask', 'b', h.drawSightMask ? 'yes' : 'no'],
       ['useSmoothEdge', 'b', h.useSmoothEdge ? 'yes' : 'no'],
+      ['applyCorrectionToGun', 'b', h.applyCorrectionToGun !== false ? 'yes' : 'no'],
       ['drawDistanceCorrection', 'b', h.drawDistanceCorrection ? 'yes' : 'no'],
       ['crosshairColor', 'c', colorStr(h.crosshairColor)],
-      ['crosshairLightColor', 'c', colorStr(h.crosshairLightColor)]
+      ['crosshairLightColor', 'c', colorStr(h.crosshairLightColor)],
+      ['radial', 'b', h.radial ? 'yes' : 'no'],
+      ['circleMode', 'b', h.circleMode ? 'yes' : 'no'],
+      ['drawUpward', 'b', h.drawUpward ? 'yes' : 'no'],
+      ['radialRadius', 'p2', p2Str(h.radialRadius, 70, 1)],
+      ['radialAngle', 'r', formatNum(h.radialAngle ?? 180)],
+      ['radialStretch', 'r', formatNum(h.radialStretch ?? 5)],
+      ['distancePos', 'p2', p2Str(h.distancePos, 0, 0)],
+      ['distanceStretch', 'r', formatNum(h.distanceStretch ?? 1)],
+      ['textPos', 'p2', p2Str(h.textPos, 0.015, 0)],
+      ['textAlign', 'i', String(Math.round(h.textAlign || 0))],
+      ['drawAdditionalLines', 'b', h.drawAdditionalLines !== false ? 'yes' : 'no'],
+      ['crosshairDistHorSizeMain', 'p2', p2Str(h.crosshairDistHorSizeMain, 0.03, 0.02)],
+      ['crosshairDistHorSizeAdditional', 'p2', p2Str(h.crosshairDistHorSizeAdditional, 0.005, 0.003)]
     ];
 
     for (const [key, type, val] of managed) {
@@ -917,7 +1205,11 @@
   function formatExtraElementProps(el) {
     let s = '';
     if (el.highlight) s += 'highlight:b=yes;';
-    if (el.center) s += 'center:b=yes;';
+    if (Array.isArray(el.centerPos) && el.centerPos.length >= 2) {
+      s += `center:p2=${formatNum(el.centerPos[0])},${formatNum(el.centerPos[1])};`;
+    } else if (el.center) {
+      s += 'center:b=yes;';
+    }
     if (el.moveRadial) s += 'moveRadial:b=yes;';
     if (Array.isArray(el.radialCenter) && el.radialCenter.length >= 2) {
       s += `radialCenter:p2=${formatNum(el.radialCenter[0])},${formatNum(el.radialCenter[1])};`;
@@ -927,6 +1219,12 @@
     }
     if (Number.isFinite(el.radialMoveSpeed)) {
       s += `radialMoveSpeed:r=${formatNum(el.radialMoveSpeed)};`;
+    }
+    if (Array.isArray(el.radialRadius) && el.radialRadius.length >= 1) {
+      s += `radialRadius:p2=${formatNum(el.radialRadius[0])},${formatNum(el.radialRadius[1] ?? 0)};`;
+    }
+    if (typeof el.drawUpward === 'boolean') {
+      s += `drawUpward:b=${el.drawUpward ? 'yes' : 'no'};`;
     }
     return s;
   }
@@ -963,6 +1261,24 @@
         name: 'matchExpClass',
         rawText: buildMatchExpClassBlock(doc.header.matchExpClass)
       });
+    }
+
+    if (doc.modifiedHeaderKeys && doc.modifiedHeaderKeys.has('crosshair_distances')) {
+      const distIdx = preserved.findIndex((b) => b.name === 'crosshair_distances');
+      const distRaw = buildDistancesBlock(doc.distances || []);
+      if (distIdx !== -1) preserved[distIdx].rawText = distRaw;
+      else preserved.push({ name: 'crosshair_distances', rawText: distRaw });
+    }
+
+    if (doc.modifiedHeaderKeys && doc.modifiedHeaderKeys.has('ballistics')) {
+      const balIdx = preserved.findIndex((b) => b.name === 'ballistics');
+      if (doc.ballistics && doc.ballistics.length > 0) {
+        const balRaw = buildBallisticsBlock(doc.ballistics);
+        if (balIdx !== -1) preserved[balIdx].rawText = balRaw;
+        else preserved.push({ name: 'ballistics', rawText: balRaw });
+      } else if (balIdx !== -1) {
+        preserved.splice(balIdx, 1);
+      }
     }
 
     if (preserved.length > 0) {
@@ -1037,6 +1353,9 @@
     parse,
     serialize,
     createEmptyDoc,
+    createDefaultBullet,
+    buildDistancesBlock,
+    buildBallisticsBlock,
     synthesizeStaticSightGeometry,
     nextId,
     formatNum

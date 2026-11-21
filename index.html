@@ -91,6 +91,8 @@
           <button class="mode-btn" data-mode="blueprint" title="High-Contrast Dark CAD Blueprint View">CAD</button>
         </div>
         <div class="v-sep"></div>
+        <button id="btnRangePreview" class="btn btn-secondary btn-sm" title="Simulate War Thunder Rangefinder &amp; Circular Distance Control (0–4000m)">◎ Range Preview</button>
+        <div class="v-sep"></div>
         <button id="btnExportPng" class="btn btn-ghost btn-sm" title="Export a high-resolution PNG screenshot of the reticle">PNG</button>
         <button id="btnViewCode" class="btn btn-secondary btn-sm" title="Inspect or edit raw .blk source">Raw .blk</button>
         <button id="btnOpenGuide" class="btn btn-ghost btn-sm" title="Quick Usage &amp; War Thunder Sight Installation Guide">? Guide</button>
@@ -262,6 +264,36 @@
           </div>
         </div>
 
+        <div class="range-preview-bar" id="rangePreviewBar" hidden>
+          <div class="range-preview-row">
+            <button id="btnRangePlay" class="hud-btn range-play-btn" title="Auto-sweep rangefinder (Play / Pause)">▶</button>
+            <input type="range" id="rngPreviewDist" min="0" max="4000" step="10" value="0" title="Simulate distance zeroing (meters)" />
+            <span class="val-pill mono" id="lblPreviewDist">0 m</span>
+            <span class="badge mono" id="lblPreviewDrop">0.0 mil</span>
+            <button id="btnRangeReset" class="hud-btn" title="Reset range to 0m">0m</button>
+            <button id="btnRangeClose" class="hud-btn" title="Close Rangefinder Preview">✕</button>
+          </div>
+          <div class="range-preview-row range-preview-meta">
+            <select id="selPreviewShell" class="mini-select" title="Ballistic shell profile for range simulation">
+              <option value="auto">Auto (935 m/s)</option>
+              <option value="panther_apcbc">Panther APCBC (935 m/s)</option>
+              <option value="tiger_aphe">Tiger 88 APHE (773 m/s)</option>
+              <option value="he_700">HE Frag (700 m/s)</option>
+              <option value="apcr_1120">APCR (1120 m/s)</option>
+              <option value="apfsds_1650">APFSDS (1650 m/s)</option>
+            </select>
+            <input type="number" id="numPreviewSpeed" class="mini-num" min="100" max="2500" step="5" value="935" title="Gun shell muzzle velocity (m/s)" />
+            <span class="muted-note">m/s</span>
+            <span class="muted-note">Zoom</span>
+            <input type="range" id="rngPreviewZoom" min="0.5" max="3.5" step="0.05" value="1" title="Optic zoom simulation (scales thousandth:b=yes elements)" />
+            <span class="val-pill mono" id="lblPreviewZoom">1.00x</span>
+            <label class="inline-check" title="Show circular dial pivot &amp; ring guides">
+              <input type="checkbox" id="chkPreviewGuides" checked />
+              <span>Guides</span>
+            </label>
+          </div>
+        </div>
+
         <div class="viewport-hud">
           <span class="hud-item mono" id="hudCoords">X: 0.0000  Y: 0.0000</span>
           <div class="v-sep"></div>
@@ -327,6 +359,10 @@
               <label title="New shapes use thousandths/mils coordinates (thousandth:b=true)">
                 <input type="checkbox" id="chkDefaultThousandth" />
                 <span>mils</span>
+              </label>
+              <label title="New shapes rotate radially around (0,0) with range adjustment (moveRadial:b=yes)">
+                <input type="checkbox" id="chkDefaultMoveRadial" />
+                <span>radial</span>
               </label>
             </div>
 
@@ -417,7 +453,127 @@
           </div>
         </details>
 
-        <!-- 2. Reference Image & Ultra-Sensitive Pro Auto-Tracer -->
+        <!-- 2. Circular / Radial Rangefinder Builder -->
+        <details class="panel" id="radialPanel">
+          <summary class="panel-header">
+            <span>Circular Rangefinder (Radial)</span>
+            <span class="badge mono" id="radialStatusBadge">OFF</span>
+          </summary>
+          <div class="panel-body">
+            <button id="btnOpenRangePreview" class="btn btn-sm btn-primary full-width" title="Open interactive range simulation bar to watch the circular dial rotate">▶ Preview Circular Rangefinder</button>
+
+            <div class="sub-box">
+              <div class="sub-title">Quick Radial Sight Builder</div>
+              <div class="field-row">
+                <select id="selRadialTemplate" title="Choose a historical or modern circular rangefinder template">
+                  <option value="tzf12a">TZF 12a Panther (Dot Ring)</option>
+                  <option value="tzf9b">TZF 9b Tiger (Dual Arc)</option>
+                  <option value="modern_radial">Modern Radial Tick Dial (All Tanks)</option>
+                </select>
+                <button id="btnBuildRadialPreset" class="btn btn-xs btn-secondary" title="Build complete circular rangefinder sight &amp; start preview">+ Build</button>
+              </div>
+            </div>
+
+            <div class="field-row">
+              <label for="selRadialScaleTarget">Scale Target</label>
+              <select id="selRadialScaleTarget" title="Configure top-level crosshair_distances or a ballistics bullet block">
+                <option value="main">Main Scale (crosshair_distances)</option>
+              </select>
+            </div>
+            <div class="btn-row">
+              <button id="btnAddBulletScale" class="btn btn-xs btn-secondary">+ Bullet</button>
+              <button id="btnRemoveBulletScale" class="btn btn-xs btn-danger" disabled>✕ Remove</button>
+            </div>
+
+            <div class="toggle-grid">
+              <label class="toggle-chip" title="Render this scale in circular radial mode (radial:b=yes)">
+                <input type="checkbox" id="chkRadialEnabled" />
+                <span>Circular (radial:b)</span>
+              </label>
+              <label class="toggle-chip" title="Draw circular dots instead of line ticks (circleMode:b=yes)">
+                <input type="checkbox" id="chkRadialCircleMode" />
+                <span>Dots (circleMode)</span>
+              </label>
+              <label class="toggle-chip" title="Lay out range marks clockwise from start angle (drawUpward:b=yes)">
+                <input type="checkbox" id="chkRadialDrawUpward" checked />
+                <span>Clockwise (upward)</span>
+              </label>
+              <label class="toggle-chip" title="Keep central aiming mark fixed or apply elevation to gun (applyCorrectionToGun:b)">
+                <input type="checkbox" id="chkRadialApplyGun" checked />
+                <span>Gun Corr.</span>
+              </label>
+            </div>
+
+            <div id="radialBulletFields" class="sub-box" hidden>
+              <div class="sub-title">Ballistic Shell Parameters</div>
+              <div class="field-row">
+                <label for="selBulletType">bulletType</label>
+                <select id="selBulletType">
+                  <option value="apcbc_tank">apcbc_tank</option>
+                  <option value="aphe_tank">aphe_tank</option>
+                  <option value="ap_tank">ap_tank</option>
+                  <option value="apcr_tank">apcr_tank</option>
+                  <option value="apds_tank">apds_tank</option>
+                  <option value="apds_fs_tungsten_small_core_tank">apfsds (tungsten)</option>
+                  <option value="heat_fs_tank">heat_fs_tank</option>
+                  <option value="he_frag_tank">he_frag_tank</option>
+                  <option value="smoke_tank">smoke_tank</option>
+                </select>
+              </div>
+              <div class="field-row">
+                <label for="numBulletSpeed">Velocity (m/s)</label>
+                <input type="number" id="numBulletSpeed" value="935" step="5" min="100" max="2500" />
+              </div>
+            </div>
+
+            <div class="field-row">
+              <label for="numRadialRadius">Ring Radius</label>
+              <input type="number" id="numRadialRadius" value="70" step="1" min="1" />
+              <label class="inline-check" title="Interpret Ring Radius in thousandths/mils (radialRadius second flag)">
+                <input type="checkbox" id="chkRadialRadiusMil" checked />
+                <span>mils</span>
+              </label>
+            </div>
+
+            <div class="field-row">
+              <label>Angle° / Stretch</label>
+              <div class="dual-inputs">
+                <input type="number" id="numRadialAngle" value="180" step="5" title="Start angle radialAngle:r (180 = top)" />
+                <input type="number" id="numRadialStretch" value="5" step="0.25" min="0.1" title="Angular spacing multiplier radialStretch:r" />
+              </div>
+            </div>
+
+            <div class="field-row">
+              <label>Center X / Y</label>
+              <div class="dual-inputs">
+                <input type="number" id="numRadialPosX" value="0" step="0.01" title="Ring center X (distancePos)" />
+                <input type="number" id="numRadialPosY" value="0" step="0.01" title="Ring center Y (distancePos)" />
+              </div>
+            </div>
+
+            <div class="field-row">
+              <label for="numRadialTextOff">Label Offset</label>
+              <input type="number" id="numRadialTextOff" value="0.015" step="0.002" title="Radial distance offset of range numbers (textPos.x)" />
+            </div>
+
+            <div class="sub-box">
+              <div class="sub-title">Range Marks Generator (Step / Max / Labels)</div>
+              <div class="triple-inputs">
+                <input type="number" id="numRadialStep" value="100" step="50" min="50" title="Distance step (m)" />
+                <input type="number" id="numRadialMax" value="3000" step="100" min="200" title="Max distance (m)" />
+                <input type="number" id="numRadialLabelStep" value="200" step="100" min="100" title="Label interval (m)" />
+              </div>
+              <button id="btnApplyRadialTicks" class="btn btn-xs btn-secondary full-width">Generate Distance Marks</button>
+            </div>
+
+            <div class="btn-row">
+              <button id="btnAddRadialPointer" class="btn btn-xs btn-secondary" title="Add fixed 12 o'clock aiming triangle pointer">+ Index Pointer</button>
+              <button id="btnBakeRadialShapes" class="btn btn-xs btn-ghost" title="Convert active radial scale into editable moveRadial vector elements">Bake → Editable Shapes</button>
+            </div>
+          </div>
+        </details>
+
+        <!-- 3. Reference Image & Ultra-Sensitive Pro Auto-Tracer -->
         <details class="panel" open>
           <summary class="panel-header">Ref Image &amp; Pro Auto-Draw</summary>
           <div class="panel-body">
@@ -669,6 +825,35 @@
                 <label title="Use angular thousandths/mils coordinates (thousandth:b=true)"><input type="checkbox" id="chkSelThousandth" /> <span>thousandth:b</span></label>
                 <label title="Boost illumination brightness (highlight:b=yes)"><input type="checkbox" id="chkSelHighlight" /> <span>highlight:b</span></label>
               </div>
+              <div class="sub-box">
+                <div class="sub-header-row">
+                  <span class="sub-title">Circular Motion (moveRadial)</span>
+                  <label class="inline-check" title="Rotate element radially around radialCenter on zeroing (moveRadial:b=yes)">
+                    <input type="checkbox" id="chkSelMoveRadial" />
+                    <span>moveRadial:b</span>
+                  </label>
+                </div>
+                <div class="field-row">
+                  <label>Pivot X / Y</label>
+                  <div class="dual-inputs">
+                    <input type="number" id="numSelRadCx" value="0" step="0.01" placeholder="X" title="radialCenter X" />
+                    <input type="number" id="numSelRadCy" value="0" step="0.01" placeholder="Y" title="radialCenter Y" />
+                  </div>
+                </div>
+                <div class="field-row">
+                  <label>Angle° / Speed</label>
+                  <div class="dual-inputs">
+                    <input type="number" id="numSelRadAngle" value="" step="1" placeholder="deg" title="Initial radialAngle:r (degrees CCW)" />
+                    <input type="number" id="numSelRadSpeed" value="" step="0.05" placeholder="speed" title="radialMoveSpeed:r multiplier" />
+                  </div>
+                </div>
+                <div class="field-row">
+                  <label for="numSelRadMult" title="Set each shape's radialMoveSpeed = multiplier × radius so multi-radius digits rotate rigidly">Rigid Mult</label>
+                  <input type="number" id="numSelRadMult" value="20.64" step="0.1" />
+                  <button id="btnSelRadSyncRigid" class="btn btn-xs btn-ghost" title="Compute radialMoveSpeed = Rigid Mult × distance from radialCenter for each selected item">Sync by Radius</button>
+                </div>
+                <button id="btnSelRadApply" class="btn btn-xs btn-secondary full-width">Apply Radial to Selection</button>
+              </div>
               <div class="field-row">
                 <label>Shift dX/dY</label>
                 <div class="dual-inputs">
@@ -748,6 +933,10 @@
               <label class="toggle-chip" title="drawDistanceCorrection:b: Display ballistic range correction readout">
                 <input type="checkbox" id="chkDistCorr" checked />
                 <span>Range Readout</span>
+              </label>
+              <label class="toggle-chip" title="applyCorrectionToGun:b: Elevate gun (yes) or shift aiming mark downward (no)">
+                <input type="checkbox" id="chkApplyCorrGun" checked />
+                <span>Gun Correction</span>
               </label>
             </div>
             <div class="field-row">
@@ -851,7 +1040,11 @@
         <p style="margin: 0 0 12px; color: var(--text-muted);">
           Use the <strong>Detail Kept (5%–99%)</strong> slider in <strong>Sight Optimizer &amp; Complexity</strong> to smoothly reduce line/quad counts while staying inside War Thunder's engine limits. Click <strong>↩ Undo Optimize</strong> anytime to restore full detail.
         </p>
-        <h4 style="margin: 0 0 6px; color: var(--accent);">5. Installing Your Sight &amp; Troubleshooting</h4>
+        <h4 style="margin: 0 0 6px; color: var(--accent);">5. Circular Rangefinders (TZF-Style Radial Dials) &amp; Range Preview</h4>
+        <p style="margin: 0 0 12px; color: var(--text-muted);">
+          Open <strong>Circular Rangefinder (Radial)</strong> in the right sidebar to build native War Thunder radial scales (<code>ballistics { bullet { radial:b=yes } }</code> or top-level <code>radial:b=yes</code>), or assign per-element <code>moveRadial:b=yes</code> under <strong>Selection &amp; CAD</strong>. Click <strong>◎ Range Preview</strong> in the top bar to scrub or animate 0–4000 m zeroing and optic zoom live.
+        </p>
+        <h4 style="margin: 0 0 6px; color: var(--accent);">6. Installing Your Sight &amp; Troubleshooting</h4>
         <p style="margin: 0; color: var(--text-muted);">
           Click <strong>Save .blk</strong> (make sure the sight filename <strong>has no spaces</strong>, e.g. <code>my_sight.blk</code>) and place it inside:<br/>
           • Specific vehicle: <code>C:\Users\&lt;username&gt;\Documents\My Games\WarThunder\Saves\&lt;player-ID&gt;\production\UserSights\&lt;tank-ID&gt;\&lt;sight-name&gt;.blk</code><br/>

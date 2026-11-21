@@ -48,6 +48,7 @@
       gridStep: 0.025,
       defaultMove: false,
       defaultThousandth: false,
+      defaultMoveRadial: false,
       brushMode: 'lines', // 'lines' | 'quadRibbon' | 'closedFill'
       simplifyTol: 0.0012,
       brushWidth: 0.004,
@@ -103,7 +104,23 @@
     drag: null,
     polyPoints: [],
     pendingLineStart: null,
-    editingTextTarget: null
+    editingTextTarget: null,
+
+    radialTarget: 'main',
+    rangePreview: {
+      active: false,
+      playing: false,
+      distance: 0,
+      maxDistance: 3200,
+      speed: 935,
+      dragK: 0.00011,
+      zoomMult: 1.0,
+      shellKey: 'auto',
+      showGuides: true,
+      playDir: 1,
+      pauseUntil: 0,
+      lastTs: 0
+    }
   };
 
   // =========================================================================
@@ -143,12 +160,112 @@
     return MIL_TO_UNIT;
   }
 
-  function toCanvasUnit(val, isThousandth) {
-    return isThousandth ? val * getMilUnitScale() : val;
+  function getActiveMilUnitScale() {
+    const base = getMilUnitScale();
+    const zoom = state.rangePreview.active ? (state.rangePreview.zoomMult || 1) : 1;
+    return base * zoom;
   }
 
-  function fromCanvasUnit(val, isThousandth) {
-    return isThousandth ? val / getMilUnitScale() : val;
+  function inferDragK(bulletType, speed) {
+    const bt = String(bulletType || '').toLowerCase();
+    if (bt.includes('apds_fs') || bt.includes('apfsds') || speed > 1300) return 0.000045;
+    if (bt.includes('he_') || bt.includes('heat') || bt.includes('smoke') || speed < 780) return 0.00016;
+    return 0.00011;
+  }
+
+  function computeBallisticDropMrad(distMeters, speedMps, dragK = 0.00011) {
+    if (!Number.isFinite(distMeters) || distMeters <= 0 || !Number.isFinite(speedMps) || speedMps <= 10) return 0;
+    const g = 9.81;
+    if (!dragK || dragK < 1e-7) {
+      return (1000 * g * distMeters) / (2 * speedMps * speedMps);
+    }
+    const ekd = Math.exp(dragK * distMeters) - 1;
+    const t = ekd / (dragK * speedMps);
+    const dropMeters = 0.5 * g * t * t;
+    return (1000 * dropMeters) / distMeters;
+  }
+
+  function getPreviewDropMrad() {
+    if (!state.rangePreview.active || state.rangePreview.distance <= 0) return 0;
+    return computeBallisticDropMrad(
+      state.rangePreview.distance,
+      state.rangePreview.speed || 935,
+      state.rangePreview.dragK
+    );
+  }
+
+  function getPreviewDropCanvas() {
+    const dropMrad = getPreviewDropMrad();
+    return dropMrad === 0 ? 0 : dropMrad * getActiveMilUnitScale();
+  }
+
+  function toCanvasUnit(val, isThousandth, milScale = getActiveMilUnitScale()) {
+    return isThousandth ? val * milScale : val;
+  }
+
+  function fromCanvasUnit(val, isThousandth, milScale = getActiveMilUnitScale()) {
+    return isThousandth ? val / milScale : val;
+  }
+
+  function rotatePointCCW(px, py, cx, cy, rad) {
+    if (!rad) return { x: px, y: py };
+    const cos = Math.cos(rad);
+    const sin = Math.sin(rad);
+    const dx = px - cx;
+    const dy = py - cy;
+    return {
+      x: cx + dx * cos + dy * sin,
+      y: cy - dx * sin + dy * cos
+    };
+  }
+
+  function getElementBaseRefCanvas(kind, item, milScale) {
+    const th = !!item.thousandth;
+    if (kind === 'line') {
+      return {
+        x: toCanvasUnit((item.x1 + item.x2) * 0.5, th, milScale),
+        y: toCanvasUnit((item.y1 + item.y2) * 0.5, th, milScale)
+      };
+    }
+    if (kind === 'quad') {
+      return {
+        x: toCanvasUnit((item.tl.x + item.tr.x + item.br.x + item.bl.x) * 0.25, th, milScale),
+        y: toCanvasUnit((item.tl.y + item.tr.y + item.br.y + item.bl.y) * 0.25, th, milScale)
+      };
+    }
+    return {
+      x: toCanvasUnit(item.x || 0, th, milScale),
+      y: toCanvasUnit(item.y || 0, th, milScale)
+    };
+  }
+
+  function getElementRadialTransform(kind, item, milScale = getActiveMilUnitScale(), dropCanvas = 0) {
+    const th = !!item.thousandth;
+    const hasAngle = Number.isFinite(item.radialAngle) && Math.abs(item.radialAngle) > 1e-6;
+    const hasDynRadial = !!(item.moveRadial && dropCanvas !== 0);
+
+    let shiftY = 0;
+    if (!item.moveRadial && item.move && dropCanvas !== 0) {
+      shiftY = state.doc?.header?.applyCorrectionToGun === false ? dropCanvas : -dropCanvas;
+    }
+
+    if (!hasAngle && !hasDynRadial) {
+      return { totalRad: 0, rcx: 0, rcy: 0, shiftY };
+    }
+
+    const rc = Array.isArray(item.radialCenter) && item.radialCenter.length >= 2 ? item.radialCenter : [0, 0];
+    const rcx = toCanvasUnit(rc[0], th, milScale);
+    const rcy = toCanvasUnit(rc[1], th, milScale);
+    let totalRad = hasAngle ? (item.radialAngle * Math.PI) / 180 : 0;
+
+    if (hasDynRadial) {
+      const ref = getElementBaseRefCanvas(kind, item, milScale);
+      const rCanvas = Math.max(0.01, Math.hypot(ref.x - rcx, ref.y - rcy));
+      const speed = Number.isFinite(item.radialMoveSpeed) ? item.radialMoveSpeed : 1;
+      totalRad += (speed * dropCanvas) / rCanvas;
+    }
+
+    return { totalRad, rcx, rcy, shiftY };
   }
 
   function formatCoord(n) {
@@ -191,45 +308,51 @@
     return state.layers[layer]?.locked === true;
   }
 
-  function getShapePointsCanvas(kind, item) {
+  function getShapePointsCanvas(kind, item, usePreview = true) {
+    const milScale = getActiveMilUnitScale();
+    const dropCanvas = usePreview ? getPreviewDropCanvas() : 0;
     const th = !!item.thousandth;
+    const xf = getElementRadialTransform(kind, item, milScale, dropCanvas);
+    const xform = (wx, wy) => {
+      const p = xf.totalRad ? rotatePointCCW(wx, wy, xf.rcx, xf.rcy, xf.totalRad) : { x: wx, y: wy };
+      if (xf.shiftY) p.y += xf.shiftY;
+      return p;
+    };
+
     if (kind === 'line') {
       return [
-        { x: toCanvasUnit(item.x1, th), y: toCanvasUnit(item.y1, th) },
-        { x: toCanvasUnit(item.x2, th), y: toCanvasUnit(item.y2, th) }
+        xform(toCanvasUnit(item.x1, th, milScale), toCanvasUnit(item.y1, th, milScale)),
+        xform(toCanvasUnit(item.x2, th, milScale), toCanvasUnit(item.y2, th, milScale))
       ];
     }
     if (kind === 'quad') {
       return [
-        { x: toCanvasUnit(item.tl.x, th), y: toCanvasUnit(item.tl.y, th) },
-        { x: toCanvasUnit(item.tr.x, th), y: toCanvasUnit(item.tr.y, th) },
-        { x: toCanvasUnit(item.br.x, th), y: toCanvasUnit(item.br.y, th) },
-        { x: toCanvasUnit(item.bl.x, th), y: toCanvasUnit(item.bl.y, th) }
+        xform(toCanvasUnit(item.tl.x, th, milScale), toCanvasUnit(item.tl.y, th, milScale)),
+        xform(toCanvasUnit(item.tr.x, th, milScale), toCanvasUnit(item.tr.y, th, milScale)),
+        xform(toCanvasUnit(item.br.x, th, milScale), toCanvasUnit(item.br.y, th, milScale)),
+        xform(toCanvasUnit(item.bl.x, th, milScale), toCanvasUnit(item.bl.y, th, milScale))
       ];
     }
     if (kind === 'circle') {
-      const cx = toCanvasUnit(item.x, th);
-      const cy = toCanvasUnit(item.y, th);
-      const r = toCanvasUnit(item.diameter / 2, th);
+      const c = xform(toCanvasUnit(item.x, th, milScale), toCanvasUnit(item.y, th, milScale));
+      const r = toCanvasUnit(item.diameter / 2, th, milScale);
       return [
-        { x: cx - r, y: cy - r },
-        { x: cx + r, y: cy + r },
-        { x: cx, y: cy }
+        { x: c.x - r, y: c.y - r },
+        { x: c.x + r, y: c.y + r },
+        { x: c.x, y: c.y }
       ];
     }
     if (kind === 'text') {
-      const x = toCanvasUnit(item.x, th);
-      const y = toCanvasUnit(item.y, th);
-      return [{ x, y }];
+      return [xform(toCanvasUnit(item.x, th, milScale), toCanvasUnit(item.y, th, milScale))];
     }
     return [];
   }
 
   function getShapeBoundsCanvas(kind, item) {
-    const th = !!item.thousandth;
     if (kind === 'text') {
-      const x = toCanvasUnit(item.x, th);
-      const y = toCanvasUnit(item.y, th);
+      const pts = getShapePointsCanvas('text', item);
+      const x = pts[0].x;
+      const y = pts[0].y;
       const halfW = Math.max(0.015, ((item.text || '').length || 1) * 0.008 * (item.size || 1));
       const halfH = Math.max(0.012, 0.012 * (item.size || 1));
       return { minX: x - halfW, minY: y - halfH, maxX: x + halfW, maxY: y + halfH };
@@ -270,23 +393,54 @@
   // =========================================================================
   // History (Undo / Redo)
   // =========================================================================
-  function cloneDocDrawState(doc) {
+  function cloneItemArrayProps(item) {
+    const out = { ...item };
+    if (Array.isArray(item.radialCenter)) out.radialCenter = [...item.radialCenter];
+    if (Array.isArray(item.radialRadius)) out.radialRadius = [...item.radialRadius];
+    if (Array.isArray(item.centerPos)) out.centerPos = [...item.centerPos];
+    return out;
+  }
+
+  function cloneBulletItem(b) {
     return {
-      lines: doc.lines.map((l) => ({ ...l })),
+      ...b,
+      radialRadius: [...(b.radialRadius || [70, 1])],
+      distancePos: [...(b.distancePos || [0, 0])],
+      crosshairDistHorSizeMain: [...(b.crosshairDistHorSizeMain || [0.001, 0.001])],
+      crosshairDistHorSizeAdditional: [...(b.crosshairDistHorSizeAdditional || [0.005, 0.003])],
+      textPos: [...(b.textPos || [0.015, 0])],
+      distanceCorrectionPos: [...(b.distanceCorrectionPos || [-0.2, -0.05])],
+      distances: (b.distances || []).map((d) => ({ ...d }))
+    };
+  }
+
+  function cloneDocDrawState(doc) {
+    const h = doc.header || {};
+    return {
+      lines: doc.lines.map((l) => cloneItemArrayProps(l)),
       quads: doc.quads.map((q) => ({
-        ...q,
+        ...cloneItemArrayProps(q),
         tl: { ...q.tl },
         tr: { ...q.tr },
         br: { ...q.br },
         bl: { ...q.bl }
       })),
-      circles: doc.circles.map((c) => ({ ...c })),
-      texts: doc.texts.map((t) => ({ ...t })),
+      circles: doc.circles.map((c) => cloneItemArrayProps(c)),
+      texts: doc.texts.map((t) => cloneItemArrayProps(t)),
+      distances: (doc.distances || []).map((d) => ({ ...d })),
+      ballistics: (doc.ballistics || []).map(cloneBulletItem),
       header: {
-        ...doc.header,
-        crosshairColor: { ...doc.header.crosshairColor },
-        crosshairLightColor: { ...doc.header.crosshairLightColor },
-        matchExpClass: { ...(doc.header.matchExpClass || { exp_tank: true, exp_heavy_tank: true, exp_tank_destroyer: true, exp_SPAA: true }) }
+        ...h,
+        crosshairColor: { ...h.crosshairColor },
+        crosshairLightColor: { ...h.crosshairLightColor },
+        crosshairHorVertSize: [...(h.crosshairHorVertSize || [3, 2])],
+        crosshairDistHorSizeMain: [...(h.crosshairDistHorSizeMain || [0.03, 0.02])],
+        crosshairDistHorSizeAdditional: [...(h.crosshairDistHorSizeAdditional || [0.005, 0.003])],
+        distanceCorrectionPos: [...(h.distanceCorrectionPos || [-0.26, -0.05])],
+        radialRadius: [...(h.radialRadius || [70, 1])],
+        distancePos: [...(h.distancePos || [0, 0])],
+        textPos: [...(h.textPos || [0.015, 0])],
+        matchExpClass: { ...(h.matchExpClass || { exp_tank: true, exp_heavy_tank: true, exp_tank_destroyer: true, exp_SPAA: true }) }
       },
       modifiedHeaderKeys: new Set(doc.modifiedHeaderKeys || [])
     };
@@ -325,6 +479,8 @@
     state.doc.quads = cloned.quads;
     state.doc.circles = cloned.circles;
     state.doc.texts = cloned.texts;
+    state.doc.distances = cloned.distances;
+    state.doc.ballistics = cloned.ballistics;
     state.doc.header = cloned.header;
     state.doc.modifiedHeaderKeys = cloned.modifiedHeaderKeys;
     const validIds = new Set(allShapes().map((s) => s.item.id));
@@ -332,6 +488,8 @@
       if (!validIds.has(id)) state.selection.delete(id);
     }
     syncHeaderUIFromDoc();
+    syncRadialPanelUIFromDoc();
+    syncPreviewShellOptions();
     updateSelectionUI();
     updateStatsUI();
     requestRender();
@@ -588,19 +746,34 @@
     return list;
   }
 
+  function makeDefaultRadialFields(refX, refY) {
+    if (!state.options.defaultMoveRadial) return {};
+    const mult = parseFloat($('numSelRadMult')?.value) || 20.64;
+    const r = Math.max(0.01, Math.hypot(refX, refY));
+    return {
+      moveRadial: true,
+      radialCenter: [0, 0],
+      radialAngle: 0,
+      radialMoveSpeed: Number((mult * r).toFixed(6))
+    };
+  }
+
   function addLineSymmetric(x1, y1, x2, y2, layer = 'draw') {
     const th = state.options.defaultThousandth;
     const mv = state.options.defaultMove;
     for (const { sx, sy } of getMirrorTransforms()) {
+      const rx1 = x1 * sx, ry1 = y1 * sy;
+      const rx2 = x2 * sx, ry2 = y2 * sy;
       state.doc.lines.push({
         id: BlkParser.nextId('line'),
         layer,
-        x1: fromCanvasUnit(x1 * sx, th),
-        y1: fromCanvasUnit(y1 * sy, th),
-        x2: fromCanvasUnit(x2 * sx, th),
-        y2: fromCanvasUnit(y2 * sy, th),
+        x1: fromCanvasUnit(rx1, th),
+        y1: fromCanvasUnit(ry1, th),
+        x2: fromCanvasUnit(rx2, th),
+        y2: fromCanvasUnit(ry2, th),
         move: mv,
-        thousandth: th
+        thousandth: th,
+        ...makeDefaultRadialFields((rx1 + rx2) * 0.5, (ry1 + ry2) * 0.5)
       });
     }
   }
@@ -609,6 +782,8 @@
     const th = state.options.defaultThousandth;
     const mv = state.options.defaultMove;
     for (const { sx, sy } of getMirrorTransforms()) {
+      const cx = (tl.x + tr.x + br.x + bl.x) * 0.25 * sx;
+      const cy = (tl.y + tr.y + br.y + bl.y) * 0.25 * sy;
       state.doc.quads.push({
         id: BlkParser.nextId('quad'),
         layer,
@@ -617,7 +792,8 @@
         br: { x: fromCanvasUnit(br.x * sx, th), y: fromCanvasUnit(br.y * sy, th) },
         bl: { x: fromCanvasUnit(bl.x * sx, th), y: fromCanvasUnit(bl.y * sy, th) },
         move: mv,
-        thousandth: th
+        thousandth: th,
+        ...makeDefaultRadialFields(cx, cy)
       });
     }
   }
@@ -726,7 +902,8 @@
           startAngle: sAng,
           endAngle: eAng,
           move: mv,
-          thousandth: th
+          thousandth: th,
+          ...makeDefaultRadialFields(cx * sx, cy * sy)
         });
       }
       return;
@@ -838,13 +1015,9 @@
       if (!isLayerVisible(item.layer)) continue;
       if (!ignoreLocks && isLayerLocked(item.layer)) continue;
 
-      const th = !!item.thousandth;
       if (kind === 'line') {
-        const d = distToSegment(
-          wx, wy,
-          toCanvasUnit(item.x1, th), toCanvasUnit(item.y1, th),
-          toCanvasUnit(item.x2, th), toCanvasUnit(item.y2, th)
-        );
+        const pts = getShapePointsCanvas('line', item);
+        const d = distToSegment(wx, wy, pts[0].x, pts[0].y, pts[1].x, pts[1].y);
         if (d <= tol) return { kind, item };
       } else if (kind === 'quad') {
         const pts = getShapePointsCanvas('quad', item);
@@ -856,10 +1029,10 @@
           }
         }
       } else if (kind === 'circle') {
-        const cx = toCanvasUnit(item.x, th);
-        const cy = toCanvasUnit(item.y, th);
-        const r = toCanvasUnit(item.diameter / 2, th);
-        const dist = Math.hypot(wx - cx, wy - cy);
+        const pts = getShapePointsCanvas('circle', item);
+        const c = pts[2];
+        const r = Math.abs(pts[1].x - pts[0].x) * 0.5;
+        const dist = Math.hypot(wx - c.x, wy - c.y);
         if (Math.abs(dist - r) <= tol) return { kind, item };
       } else if (kind === 'text') {
         const b = getShapeBoundsCanvas('text', item);
@@ -907,16 +1080,18 @@
     if (selected.length === 1) {
       const { kind, item } = selected[0];
       if (!isLayerLocked(item.layer)) {
-        const th = !!item.thousandth;
         if (kind === 'line') {
-          const p1 = worldToScreen(toCanvasUnit(item.x1, th), toCanvasUnit(item.y1, th));
-          const p2 = worldToScreen(toCanvasUnit(item.x2, th), toCanvasUnit(item.y2, th));
+          const pts = getShapePointsCanvas('line', item);
+          const p1 = worldToScreen(pts[0].x, pts[0].y);
+          const p2 = worldToScreen(pts[1].x, pts[1].y);
           if (Math.hypot(sx - p1.x, sy - p1.y) <= 9) return { type: 'vertex', item, key: 'p1' };
           if (Math.hypot(sx - p2.x, sy - p2.y) <= 9) return { type: 'vertex', item, key: 'p2' };
         } else if (kind === 'quad') {
-          for (const key of ['tl', 'tr', 'br', 'bl']) {
-            const p = worldToScreen(toCanvasUnit(item[key].x, th), toCanvasUnit(item[key].y, th));
-            if (Math.hypot(sx - p.x, sy - p.y) <= 8) return { type: 'vertex', item, key };
+          const pts = getShapePointsCanvas('quad', item);
+          const keys = ['tl', 'tr', 'br', 'bl'];
+          for (let i = 0; i < 4; i++) {
+            const p = worldToScreen(pts[i].x, pts[i].y);
+            if (Math.hypot(sx - p.x, sy - p.y) <= 8) return { type: 'vertex', item, key: keys[i] };
           }
         }
       }
@@ -947,11 +1122,19 @@
   }
 
   function translateEntries(entries, dxCanvas, dyCanvas) {
+    const milScale = getActiveMilUnitScale();
     for (const { kind, item } of entries) {
       if (isLayerLocked(item.layer)) continue;
       const th = !!item.thousandth;
-      const dx = fromCanvasUnit(dxCanvas, th);
-      const dy = fromCanvasUnit(dyCanvas, th);
+      let dcx = dxCanvas;
+      let dcy = dyCanvas;
+      if (Number.isFinite(item.radialAngle) && Math.abs(item.radialAngle) > 1e-6) {
+        const inv = rotatePointCCW(dcx, dcy, 0, 0, (-item.radialAngle * Math.PI) / 180);
+        dcx = inv.x;
+        dcy = inv.y;
+      }
+      const dx = fromCanvasUnit(dcx, th, milScale);
+      const dy = fromCanvasUnit(dcy, th, milScale);
       if (kind === 'line') {
         item.x1 += dx; item.y1 += dy;
         item.x2 += dx; item.y2 += dy;
@@ -970,40 +1153,59 @@
   }
 
   function transformShapes(entries, cx, cy, sx, sy, angleRad) {
+    const milScale = getActiveMilUnitScale();
     const cos = Math.cos(angleRad);
     const sin = Math.sin(angleRad);
 
-    function xf(px, py, th) {
-      const wx = toCanvasUnit(px, th) - cx;
-      const wy = toCanvasUnit(py, th) - cy;
-      const rx = wx * sx;
-      const ry = wy * sy;
-      const nx = cx + (rx * cos - ry * sin);
-      const ny = cy + (rx * sin + ry * cos);
+    function xf(px, py, th, item) {
+      let wx = toCanvasUnit(px, th, milScale);
+      let wy = toCanvasUnit(py, th, milScale);
+      const hasAngle = Number.isFinite(item.radialAngle) && Math.abs(item.radialAngle) > 1e-6;
+      let rcx = 0, rcy = 0, phi = 0;
+      if (hasAngle) {
+        const rc = Array.isArray(item.radialCenter) && item.radialCenter.length >= 2 ? item.radialCenter : [0, 0];
+        rcx = toCanvasUnit(rc[0], th, milScale);
+        rcy = toCanvasUnit(rc[1], th, milScale);
+        phi = (item.radialAngle * Math.PI) / 180;
+        const rotP = rotatePointCCW(wx, wy, rcx, rcy, phi);
+        wx = rotP.x;
+        wy = rotP.y;
+      }
+      const dx = wx - cx;
+      const dy = wy - cy;
+      const rx = dx * sx;
+      const ry = dy * sy;
+      let nx = cx + (rx * cos - ry * sin);
+      let ny = cy + (rx * sin + ry * cos);
+      if (hasAngle) {
+        const inv = rotatePointCCW(nx, ny, rcx, rcy, -phi);
+        nx = inv.x;
+        ny = inv.y;
+      }
       return {
-        x: fromCanvasUnit(nx, th),
-        y: fromCanvasUnit(ny, th)
+        x: fromCanvasUnit(nx, th, milScale),
+        y: fromCanvasUnit(ny, th, milScale)
       };
     }
 
     for (const { kind, item } of entries) {
       const th = !!item.thousandth;
       if (kind === 'line') {
-        const a = xf(item.x1, item.y1, th);
-        const b = xf(item.x2, item.y2, th);
+        const a = xf(item.x1, item.y1, th, item);
+        const b = xf(item.x2, item.y2, th, item);
         item.x1 = a.x; item.y1 = a.y;
         item.x2 = b.x; item.y2 = b.y;
       } else if (kind === 'quad') {
         for (const k of ['tl', 'tr', 'br', 'bl']) {
-          const p = xf(item[k].x, item[k].y, th);
+          const p = xf(item[k].x, item[k].y, th, item);
           item[k].x = p.x; item[k].y = p.y;
         }
       } else if (kind === 'circle') {
-        const p = xf(item.x, item.y, th);
+        const p = xf(item.x, item.y, th, item);
         item.x = p.x; item.y = p.y;
         item.diameter *= (Math.abs(sx) + Math.abs(sy)) / 2;
       } else if (kind === 'text') {
-        const p = xf(item.x, item.y, th);
+        const p = xf(item.x, item.y, th, item);
         item.x = p.x; item.y = p.y;
         item.size *= (Math.abs(sx) + Math.abs(sy)) / 2;
       }
@@ -1012,14 +1214,15 @@
 
   function cloneEntry(kind, item, targetLayer = null) {
     const layer = targetLayer || item.layer || 'draw';
+    const base = cloneItemArrayProps(item);
     if (kind === 'line') {
-      return { kind, item: { ...item, id: BlkParser.nextId('line'), layer } };
+      return { kind, item: { ...base, id: BlkParser.nextId('line'), layer } };
     }
     if (kind === 'quad') {
       return {
         kind,
         item: {
-          ...item,
+          ...base,
           id: BlkParser.nextId('quad'),
           layer,
           tl: { ...item.tl },
@@ -1030,10 +1233,10 @@
       };
     }
     if (kind === 'circle') {
-      return { kind, item: { ...item, id: BlkParser.nextId('circle'), layer } };
+      return { kind, item: { ...base, id: BlkParser.nextId('circle'), layer } };
     }
     if (kind === 'text') {
-      return { kind, item: { ...item, id: BlkParser.nextId('text'), layer } };
+      return { kind, item: { ...base, id: BlkParser.nextId('text'), layer } };
     }
     return null;
   }
@@ -1168,15 +1371,20 @@
     if (targetLines.length < 2) return targetLines.map((l) => ({ ...l }));
     const { rdpTol, weldTol, minSegLen } = detailPctToTolerances(detailPct, allowWeld);
 
-    // Group lines by layer|move|thousandth
+    // Group lines by layer|move|thousandth (keep moveRadial/radialAngle lines separate so radial vectors never corrupt!)
     const groups = new Map();
+    const passthroughRadial = [];
     for (const l of targetLines) {
+      if (l.moveRadial || (Number.isFinite(l.radialAngle) && Math.abs(l.radialAngle) > 1e-6)) {
+        passthroughRadial.push(cloneItemArrayProps(l));
+        continue;
+      }
       const key = `${l.layer}|${l.move ? 1 : 0}|${l.thousandth ? 1 : 0}`;
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(l);
     }
 
-    const result = [];
+    const result = passthroughRadial;
 
     for (const [, list] of groups) {
       const th = !!list[0].thousandth;
@@ -1439,6 +1647,7 @@
       const len = Math.hypot(dx, dy) || 1;
       const nx = (-dy / len) * w, ny = (dx / len) * w;
       const q = {
+        ...cloneItemArrayProps(l),
         id: BlkParser.nextId('quad'),
         layer: l.layer,
         tl: { x: l.x1 + nx, y: l.y1 + ny },
@@ -1448,6 +1657,7 @@
         move: l.move,
         thousandth: l.thousandth
       };
+      delete q.x1; delete q.y1; delete q.x2; delete q.y2;
       state.doc.quads.push(q);
       newIds.add(q.id);
     }
@@ -1472,10 +1682,13 @@
 
     for (const q of selQuads) {
       const corners = [q.tl, q.tr, q.br, q.bl];
+      const baseProps = cloneItemArrayProps(q);
+      delete baseProps.tl; delete baseProps.tr; delete baseProps.br; delete baseProps.bl;
       for (let i = 0; i < 4; i++) {
         const a = corners[i], b = corners[(i + 1) % 4];
         if (Math.hypot(b.x - a.x, b.y - a.y) < 1e-6) continue;
         const ln = {
+          ...baseProps,
           id: BlkParser.nextId('line'),
           layer: q.layer,
           x1: a.x, y1: a.y, x2: b.x, y2: b.y,
@@ -1521,7 +1734,9 @@
     const visDraw = state.layers.draw.visible !== false && !state.layers.draw.locked;
     let changed = false;
 
-    // 1. In-place AABB-culled Line Eraser (zero allocations)
+    // 1. In-place AABB-culled Line Eraser (zero allocations for static shapes, radial-aware when rotated)
+    const milScale = getActiveMilUnitScale();
+    const dropCanvas = getPreviewDropCanvas();
     const lines = state.doc.lines;
     let wLine = 0;
     for (let i = 0, len = lines.length; i < len; i++) {
@@ -1531,9 +1746,15 @@
         lines[wLine++] = l;
         continue;
       }
-      const scale = l.thousandth ? MIL_TO_UNIT : 1;
-      const x1 = l.x1 * scale, y1 = l.y1 * scale;
-      const x2 = l.x2 * scale, y2 = l.y2 * scale;
+      const scale = l.thousandth ? milScale : 1;
+      let x1 = l.x1 * scale, y1 = l.y1 * scale;
+      let x2 = l.x2 * scale, y2 = l.y2 * scale;
+      if ((Number.isFinite(l.radialAngle) && Math.abs(l.radialAngle) > 1e-6) || (l.moveRadial && dropCanvas !== 0)) {
+        const xf = getElementRadialTransform('line', l, milScale, dropCanvas);
+        const p1 = rotatePointCCW(x1, y1, xf.rcx, xf.rcy, xf.totalRad);
+        const p2 = rotatePointCCW(x2, y2, xf.rcx, xf.rcy, xf.totalRad);
+        x1 = p1.x; y1 = p1.y; x2 = p2.x; y2 = p2.y;
+      }
 
       // Fast AABB rejection
       const lMinX = x1 < x2 ? x1 : x2;
@@ -1554,7 +1775,7 @@
     }
     if (wLine !== lines.length) lines.length = wLine;
 
-    // 2. In-place AABB-culled Quad Eraser (zero allocations)
+    // 2. In-place AABB-culled Quad Eraser
     const quads = state.doc.quads;
     let wQuad = 0;
     for (let i = 0, len = quads.length; i < len; i++) {
@@ -1564,11 +1785,20 @@
         quads[wQuad++] = q;
         continue;
       }
-      const scale = q.thousandth ? MIL_TO_UNIT : 1;
-      const x0 = q.tl.x * scale, y0 = q.tl.y * scale;
-      const x1 = q.tr.x * scale, y1 = q.tr.y * scale;
-      const x2 = q.br.x * scale, y2 = q.br.y * scale;
-      const x3 = q.bl.x * scale, y3 = q.bl.y * scale;
+      const scale = q.thousandth ? milScale : 1;
+      let x0 = q.tl.x * scale, y0 = q.tl.y * scale;
+      let x1 = q.tr.x * scale, y1 = q.tr.y * scale;
+      let x2 = q.br.x * scale, y2 = q.br.y * scale;
+      let x3 = q.bl.x * scale, y3 = q.bl.y * scale;
+      if ((Number.isFinite(q.radialAngle) && Math.abs(q.radialAngle) > 1e-6) || (q.moveRadial && dropCanvas !== 0)) {
+        const xf = getElementRadialTransform('quad', q, milScale, dropCanvas);
+        const p0 = rotatePointCCW(x0, y0, xf.rcx, xf.rcy, xf.totalRad);
+        const p1 = rotatePointCCW(x1, y1, xf.rcx, xf.rcy, xf.totalRad);
+        const p2 = rotatePointCCW(x2, y2, xf.rcx, xf.rcy, xf.totalRad);
+        const p3 = rotatePointCCW(x3, y3, xf.rcx, xf.rcy, xf.totalRad);
+        x0 = p0.x; y0 = p0.y; x1 = p1.x; y1 = p1.y;
+        x2 = p2.x; y2 = p2.y; x3 = p3.x; y3 = p3.y;
+      }
 
       const qMinX = Math.min(x0, x1, x2, x3);
       if (maxBoxX < qMinX) { quads[wQuad++] = q; continue; }
@@ -1612,8 +1842,10 @@
         const c = circles[i];
         const editable = c.layer === 'base' ? visBase : visDraw;
         if (!editable) { circles[wCirc++] = c; continue; }
-        const scale = c.thousandth ? MIL_TO_UNIT : 1;
-        const d = Math.abs(Math.hypot(wx - c.x * scale, wy - c.y * scale) - (c.diameter * 0.5 * scale));
+        const pts = getShapePointsCanvas('circle', c);
+        const cc = pts[2];
+        const rad = Math.abs(pts[1].x - pts[0].x) * 0.5;
+        const d = Math.abs(Math.hypot(wx - cc.x, wy - cc.y) - rad);
         if (d <= r) {
           if (state.selection.size > 0) state.selection.delete(c.id);
           changed = true;
@@ -1927,7 +2159,7 @@
       return layer === 'base' ? '#38bdf8' : '#34d399';
     };
 
-    // --- Batch Quads (Zero object allocation fast path) ---
+    // --- Batch Quads (Zero object allocation fast path for static, radial-aware transform when needed) ---
     const layerOrder = colorByLayer ? ['base', 'draw'] : ['all'];
     const selectedQuads = [];
     const halfCW = canvasW * 0.5;
@@ -1936,6 +2168,38 @@
     const camY = state.cam.y;
     const camS = state.cam.scale;
     const hasSel = state.selection.size > 0;
+    const milScale = getActiveMilUnitScale();
+    const dropCanvas = getPreviewDropCanvas();
+
+    const drawQuadPath = (q, sc) => {
+      const hasAng = Number.isFinite(q.radialAngle) && Math.abs(q.radialAngle) > 1e-6;
+      const hasDyn = !!(q.moveRadial && dropCanvas !== 0);
+      const hasMove = !q.moveRadial && q.move && dropCanvas !== 0;
+
+      if (!hasAng && !hasDyn && !hasMove) {
+        ctx.moveTo(halfCW + (q.tl.x * sc - camX) * camS, halfCH + (q.tl.y * sc - camY) * camS);
+        ctx.lineTo(halfCW + (q.tr.x * sc - camX) * camS, halfCH + (q.tr.y * sc - camY) * camS);
+        ctx.lineTo(halfCW + (q.br.x * sc - camX) * camS, halfCH + (q.br.y * sc - camY) * camS);
+        ctx.lineTo(halfCW + (q.bl.x * sc - camX) * camS, halfCH + (q.bl.y * sc - camY) * camS);
+        ctx.closePath();
+        return;
+      }
+      const xf = getElementRadialTransform('quad', q, milScale, dropCanvas);
+      const pts = [q.tl, q.tr, q.br, q.bl];
+      for (let k = 0; k < 4; k++) {
+        let px = pts[k].x * sc, py = pts[k].y * sc;
+        if (xf.totalRad) {
+          const r = rotatePointCCW(px, py, xf.rcx, xf.rcy, xf.totalRad);
+          px = r.x; py = r.y;
+        }
+        py += xf.shiftY;
+        const sx = halfCW + (px - camX) * camS;
+        const sy = halfCH + (py - camY) * camS;
+        if (k === 0) ctx.moveTo(sx, sy);
+        else ctx.lineTo(sx, sy);
+      }
+      ctx.closePath();
+    };
 
     for (const grp of layerOrder) {
       ctx.fillStyle = grp === 'all' ? theme.reticle : layerStyle(grp);
@@ -1946,13 +2210,7 @@
         if (!isLayerVisible(q.layer)) continue;
         if (grp !== 'all' && q.layer !== grp) continue;
         if (hasSel && state.selection.has(q.id)) selectedQuads.push(q);
-
-        const sc = q.thousandth ? MIL_TO_UNIT : 1;
-        ctx.moveTo(halfCW + (q.tl.x * sc - camX) * camS, halfCH + (q.tl.y * sc - camY) * camS);
-        ctx.lineTo(halfCW + (q.tr.x * sc - camX) * camS, halfCH + (q.tr.y * sc - camY) * camS);
-        ctx.lineTo(halfCW + (q.br.x * sc - camX) * camS, halfCH + (q.br.y * sc - camY) * camS);
-        ctx.lineTo(halfCW + (q.bl.x * sc - camX) * camS, halfCH + (q.bl.y * sc - camY) * camS);
-        ctx.closePath();
+        drawQuadPath(q, q.thousandth ? milScale : 1);
         hasAny = true;
       }
       if (hasAny) ctx.fill();
@@ -1965,21 +2223,41 @@
       ctx.lineWidth = 1.4;
       ctx.beginPath();
       for (const q of selectedQuads) {
-        const sc = q.thousandth ? MIL_TO_UNIT : 1;
-        ctx.moveTo(halfCW + (q.tl.x * sc - camX) * camS, halfCH + (q.tl.y * sc - camY) * camS);
-        ctx.lineTo(halfCW + (q.tr.x * sc - camX) * camS, halfCH + (q.tr.y * sc - camY) * camS);
-        ctx.lineTo(halfCW + (q.br.x * sc - camX) * camS, halfCH + (q.br.y * sc - camY) * camS);
-        ctx.lineTo(halfCW + (q.bl.x * sc - camX) * camS, halfCH + (q.bl.y * sc - camY) * camS);
-        ctx.closePath();
+        drawQuadPath(q, q.thousandth ? milScale : 1);
       }
       ctx.stroke();
       ctx.restore();
     }
 
-    // --- Batch Lines (Zero object allocation fast path) ---
+    // --- Batch Lines (Zero object allocation fast path for static, radial-aware transform when needed) ---
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     const selectedLines = [];
+
+    const drawLinePath = (l, sc) => {
+      const hasAng = Number.isFinite(l.radialAngle) && Math.abs(l.radialAngle) > 1e-6;
+      const hasDyn = !!(l.moveRadial && dropCanvas !== 0);
+      const hasMove = !l.moveRadial && l.move && dropCanvas !== 0;
+
+      if (!hasAng && !hasDyn && !hasMove) {
+        ctx.moveTo(halfCW + (l.x1 * sc - camX) * camS, halfCH + (l.y1 * sc - camY) * camS);
+        ctx.lineTo(halfCW + (l.x2 * sc - camX) * camS, halfCH + (l.y2 * sc - camY) * camS);
+        return;
+      }
+      const xf = getElementRadialTransform('line', l, milScale, dropCanvas);
+      let x1 = l.x1 * sc, y1 = l.y1 * sc;
+      let x2 = l.x2 * sc, y2 = l.y2 * sc;
+      if (xf.totalRad) {
+        const p1 = rotatePointCCW(x1, y1, xf.rcx, xf.rcy, xf.totalRad);
+        const p2 = rotatePointCCW(x2, y2, xf.rcx, xf.rcy, xf.totalRad);
+        x1 = p1.x; y1 = p1.y;
+        x2 = p2.x; y2 = p2.y;
+      }
+      y1 += xf.shiftY;
+      y2 += xf.shiftY;
+      ctx.moveTo(halfCW + (x1 - camX) * camS, halfCH + (y1 - camY) * camS);
+      ctx.lineTo(halfCW + (x2 - camX) * camS, halfCH + (y2 - camY) * camS);
+    };
 
     for (const grp of layerOrder) {
       ctx.strokeStyle = grp === 'all' ? theme.reticle : layerStyle(grp);
@@ -1994,9 +2272,7 @@
           selectedLines.push(l);
           continue;
         }
-        const sc = l.thousandth ? MIL_TO_UNIT : 1;
-        ctx.moveTo(halfCW + (l.x1 * sc - camX) * camS, halfCH + (l.y1 * sc - camY) * camS);
-        ctx.lineTo(halfCW + (l.x2 * sc - camX) * camS, halfCH + (l.y2 * sc - camY) * camS);
+        drawLinePath(l, l.thousandth ? milScale : 1);
         hasAny = true;
       }
       if (hasAny) ctx.stroke();
@@ -2007,11 +2283,7 @@
       ctx.lineWidth = baseLineWidth + 1.4;
       ctx.beginPath();
       for (const l of selectedLines) {
-        const th = !!l.thousandth;
-        const a = worldToScreen(toCanvasUnit(l.x1, th), toCanvasUnit(l.y1, th));
-        const b = worldToScreen(toCanvasUnit(l.x2, th), toCanvasUnit(l.y2, th));
-        ctx.moveTo(a.x, a.y);
-        ctx.lineTo(b.x, b.y);
+        drawLinePath(l, l.thousandth ? milScale : 1);
       }
       ctx.stroke();
     }
@@ -2020,12 +2292,20 @@
     for (const c of state.doc.circles) {
       if (!isLayerVisible(c.layer)) continue;
       const th = !!c.thousandth;
-      const center = worldToScreen(toCanvasUnit(c.x, th), toCanvasUnit(c.y, th));
-      const rPx = Math.max(0.5, toCanvasUnit(c.diameter / 2, th) * state.cam.scale);
+      const xf = getElementRadialTransform('circle', c, milScale, dropCanvas);
+      let wx = toCanvasUnit(c.x, th, milScale);
+      let wy = toCanvasUnit(c.y, th, milScale);
+      if (xf.totalRad) {
+        const p = rotatePointCCW(wx, wy, xf.rcx, xf.rcy, xf.totalRad);
+        wx = p.x; wy = p.y;
+      }
+      wy += xf.shiftY;
+      const center = worldToScreen(wx, wy);
+      const rPx = Math.max(0.5, toCanvasUnit(c.diameter / 2, th, milScale) * state.cam.scale);
       const isSel = state.selection.has(c.id);
 
-      const sRad = ((c.startAngle - 90) * Math.PI) / 180;
-      const eRad = ((c.endAngle - 90) * Math.PI) / 180;
+      const sRad = ((c.startAngle - 90) * Math.PI) / 180 - xf.totalRad;
+      const eRad = ((c.endAngle - 90) * Math.PI) / 180 - xf.totalRad;
       ctx.beginPath();
       if (Math.abs((c.endAngle - c.startAngle) % 360) < 0.01 && Math.abs(c.endAngle - c.startAngle) >= 359.9) {
         ctx.arc(center.x, center.y, rPx, 0, Math.PI * 2);
@@ -2041,7 +2321,15 @@
     for (const t of state.doc.texts) {
       if (!isLayerVisible(t.layer)) continue;
       const th = !!t.thousandth;
-      const pos = worldToScreen(toCanvasUnit(t.x, th), toCanvasUnit(t.y, th));
+      const xf = getElementRadialTransform('text', t, milScale, dropCanvas);
+      let wx = toCanvasUnit(t.x, th, milScale);
+      let wy = toCanvasUnit(t.y, th, milScale);
+      if (xf.totalRad) {
+        const p = rotatePointCCW(wx, wy, xf.rcx, xf.rcy, xf.totalRad);
+        wx = p.x; wy = p.y;
+      }
+      wy += xf.shiftY;
+      const pos = worldToScreen(wx, wy);
       const fontPx = Math.max(9, 13 * (t.size || 1) * (state.doc.header.fontSizeMult || 1) * (state.cam.scale / BASE_SCALE));
       const isSel = state.selection.has(t.id);
 
@@ -2120,54 +2408,233 @@
     ctx.restore();
   }
 
-  function drawCentralSightOverlay(theme) {
-    // Skip dynamic central line overlay if static sight geometry is already synthesized into base layer
-    if (state.doc.hasSynthesizedStatic && isLayerVisible('base')) return;
+  function drawSingleBallisticScale(cfg, theme, activeMilScale, previewGunDropMrad, isMainScale = false) {
     const h = state.doc.header;
+    const distances = cfg.distances || [];
+    if (distances.length === 0) return;
+
+    const speed = cfg.speed || state.rangePreview.speed || 935;
+    const dragK = inferDragK(cfg.bulletType, speed);
+    const stretch = (cfg.radialStretch ?? 1) * (cfg.distanceStretch ?? 1);
+
+    if (cfg.radial) {
+      const rr = cfg.radialRadius || [70, 1];
+      const R = rr[1] ? rr[0] * activeMilScale : rr[0];
+      const center = cfg.distancePos || [0, 0];
+      const cx = center[0] || 0;
+      const cy = center[1] || 0;
+      const baseRad = ((cfg.radialAngle ?? 180) * Math.PI) / 180;
+      const upward = cfg.drawUpward !== false;
+
+      const deltaTheta = rr[1]
+        ? (previewGunDropMrad * stretch) / Math.max(0.01, rr[0])
+        : (previewGunDropMrad * activeMilScale * stretch) / Math.max(0.01, rr[0]);
+
+      if (state.rangePreview.active && state.rangePreview.showGuides) {
+        const sc = worldToScreen(cx, cy);
+        ctx.save();
+        ctx.setLineDash([4, 5]);
+        ctx.strokeStyle = 'rgba(56, 189, 248, 0.32)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(sc.x, sc.y, Math.max(2, R * state.cam.scale), 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      const textOff = cfg.textPos || [0.015, 0];
+      const fontMult = cfg.fontSizeMult || h.fontSizeMult || 1;
+      const fontPx = Math.max(8, 12.5 * fontMult * (state.cam.scale / BASE_SCALE));
+      const lineW = Math.max(1.1, (h.lineSizeMult || 1) * 1.4);
+
+      ctx.save();
+      ctx.strokeStyle = theme.reticle;
+      ctx.fillStyle = theme.reticle;
+      ctx.lineWidth = lineW;
+      ctx.font = `600 ${fontPx}px "Segoe UI", sans-serif`;
+      ctx.textBaseline = 'middle';
+      ctx.textAlign = cfg.textAlign === 1 ? 'left' : cfg.textAlign === -1 ? 'right' : 'center';
+
+      const mainW = cfg.crosshairDistHorSizeMain?.[0] ?? 0.014;
+      const addW = cfg.crosshairDistHorSizeAdditional?.[0] ?? 0.007;
+
+      for (const d of distances) {
+        const dropM = computeBallisticDropMrad(d.dist, speed, dragK);
+        const theta = rr[1]
+          ? (dropM * stretch) / Math.max(0.01, rr[0])
+          : (dropM * activeMilScale * stretch) / Math.max(0.01, rr[0]);
+        const phi = upward
+          ? baseRad - theta + deltaTheta
+          : baseRad + theta - deltaTheta;
+
+        const ux = Math.sin(phi);
+        const uy = Math.cos(phi);
+        const tx = -uy;
+        const ty = ux;
+
+        if (cfg.circleMode) {
+          const dotWorldR = d.minor > 0
+            ? d.minor * 0.5
+            : (d.major > 0 ? 0.0025 : 0.002);
+          const sp = worldToScreen(cx + ux * R, cy + uy * R);
+          const rPx = Math.max(1.4, dotWorldR * state.cam.scale);
+          ctx.beginPath();
+          ctx.arc(sp.x, sp.y, rPx, 0, Math.PI * 2);
+          ctx.stroke();
+        } else {
+          const tickLen = d.major > 0 ? Math.max(0.008, mainW) : Math.max(0.004, addW);
+          const pA = worldToScreen(cx + ux * R, cy + uy * R);
+          const pB = worldToScreen(cx + ux * (R + tickLen), cy + uy * (R + tickLen));
+          ctx.beginPath();
+          ctx.moveTo(pA.x, pA.y);
+          ctx.lineTo(pB.x, pB.y);
+          ctx.stroke();
+        }
+
+        if (d.major > 0) {
+          const lx = cx + ux * (R + textOff[0]) + tx * (textOff[1] || 0);
+          const ly = cy + uy * (R + textOff[0]) + ty * (textOff[1] || 0);
+          const lp = worldToScreen(lx, ly);
+          ctx.fillText(String(d.major), lp.x, lp.y);
+        }
+      }
+      ctx.restore();
+      return;
+    }
+
+    // Linear scale mode
+    if (isMainScale && !state.options.showTicks) return;
     const origin = worldToScreen(0, 0);
-    const maskR = 0.6 * state.cam.scale;
+    const mainSize = ((cfg.crosshairDistHorSizeMain?.[0] || h.crosshairDistHorSizeMain?.[0] || 0.03)) * state.cam.scale;
+    const addSize = ((cfg.crosshairDistHorSizeAdditional?.[0] || h.crosshairDistHorSizeAdditional?.[0] || 0.005)) * state.cam.scale;
+    const signY = h.applyCorrectionToGun === false ? 1 : -1;
+    const gunShiftCanvas = previewGunDropMrad * activeMilScale * signY;
+    const dStretch = cfg.distanceStretch ?? 1;
 
     ctx.save();
     ctx.strokeStyle = theme.crosshair;
     ctx.fillStyle = theme.crosshair;
     ctx.lineWidth = Math.max(1, (h.lineSizeMult || 1) * 1.1);
+    ctx.font = `600 10px "Segoe UI", sans-serif`;
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'left';
 
-    if (h.drawCentralLineVert) {
-      ctx.beginPath();
-      ctx.moveTo(origin.x, origin.y - maskR);
-      ctx.lineTo(origin.x, origin.y + maskR);
-      ctx.stroke();
-    }
-    if (h.drawCentralLineHorz) {
-      ctx.beginPath();
-      ctx.moveTo(origin.x - maskR, origin.y);
-      ctx.lineTo(origin.x + maskR, origin.y);
-      ctx.stroke();
-    }
-
-    if (state.options.showTicks && state.doc.distances && state.doc.distances.length > 0) {
-      const mainSize = (h.crosshairDistHorSizeMain?.[0] || 0.03) * state.cam.scale;
-      const addSize = (h.crosshairDistHorSizeAdditional?.[0] || 0.005) * state.cam.scale;
-      ctx.font = `600 10px "Segoe UI", sans-serif`;
-      ctx.textBaseline = 'middle';
-      ctx.textAlign = 'left';
-
-      for (const d of state.doc.distances) {
-        const dropY = (d.dist / 2000) * 0.25;
-        const p = worldToScreen(0, dropY);
-        const w = d.major > 0 ? mainSize : addSize;
-        if (w > 0.5) {
-          ctx.beginPath();
-          ctx.moveTo(origin.x - w, p.y);
-          ctx.lineTo(origin.x + w, p.y);
-          ctx.stroke();
-        }
-        if (d.major > 0) {
-          ctx.fillText(String(d.major), origin.x + w + 4, p.y);
-        }
+    for (const d of distances) {
+      const dropY = (computeBallisticDropMrad(d.dist, speed, dragK) * activeMilScale * dStretch) + gunShiftCanvas;
+      const p = worldToScreen(cfg.distancePos?.[0] || 0, dropY + (cfg.distancePos?.[1] || 0));
+      const w = d.major > 0 ? mainSize : addSize;
+      if (w > 0.5) {
+        ctx.beginPath();
+        ctx.moveTo(p.x - w, p.y);
+        ctx.lineTo(p.x + w, p.y);
+        ctx.stroke();
+      }
+      if (d.major > 0) {
+        ctx.fillText(String(d.major), p.x + w + 4, p.y);
       }
     }
     ctx.restore();
+  }
+
+  function drawBallisticScales(theme) {
+    const h = state.doc.header;
+    const activeMilScale = getActiveMilUnitScale();
+    const previewGunDropMrad = getPreviewDropMrad();
+
+    if (state.doc.distances && state.doc.distances.length > 0 && (h.radial || state.options.showTicks)) {
+      drawSingleBallisticScale(h, theme, activeMilScale, previewGunDropMrad, true);
+    }
+
+    if (state.doc.ballistics && state.doc.ballistics.length > 0) {
+      for (const b of state.doc.ballistics) {
+        drawSingleBallisticScale(b, theme, activeMilScale, previewGunDropMrad, false);
+      }
+    }
+
+    if (state.rangePreview.active) {
+      if (h.drawDistanceCorrection) {
+        const dcp = h.distanceCorrectionPos || [-0.26, -0.05];
+        const pos = worldToScreen(dcp[0], dcp[1]);
+        const fontPx = Math.max(10, 13 * (h.fontSizeMult || 1) * (state.cam.scale / BASE_SCALE));
+        ctx.save();
+        ctx.font = `600 ${fontPx}px "Segoe UI", sans-serif`;
+        ctx.fillStyle = theme.reticle;
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(`${Math.round(state.rangePreview.distance)} m`, pos.x, pos.y);
+        ctx.restore();
+      }
+
+      if (state.rangePreview.showGuides) {
+        drawPreviewRadialGuides(activeMilScale);
+      }
+    }
+  }
+
+  function drawPreviewRadialGuides(activeMilScale) {
+    const pivots = new Map();
+    for (const { kind, item } of allShapes()) {
+      if (!isLayerVisible(item.layer) || !item.moveRadial) continue;
+      const th = !!item.thousandth;
+      const rc = Array.isArray(item.radialCenter) && item.radialCenter.length >= 2 ? item.radialCenter : [0, 0];
+      const rcx = toCanvasUnit(rc[0], th, activeMilScale);
+      const rcy = toCanvasUnit(rc[1], th, activeMilScale);
+      const ref = getElementBaseRefCanvas(kind, item, activeMilScale);
+      const rad = Math.hypot(ref.x - rcx, ref.y - rcy);
+      const key = `${rcx.toFixed(4)},${rcy.toFixed(4)}`;
+      if (!pivots.has(key)) pivots.set(key, { x: rcx, y: rcy, radii: [] });
+      if (rad > 0.02) pivots.get(key).radii.push(rad);
+    }
+
+    ctx.save();
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.35)';
+    ctx.lineWidth = 1;
+    for (const p of pivots.values()) {
+      const sp = worldToScreen(p.x, p.y);
+      ctx.beginPath();
+      ctx.moveTo(sp.x - 6, sp.y); ctx.lineTo(sp.x + 6, sp.y);
+      ctx.moveTo(sp.x, sp.y - 6); ctx.lineTo(sp.x, sp.y + 6);
+      ctx.stroke();
+      if (p.radii.length > 0) {
+        p.radii.sort((a, b) => a - b);
+        const medianR = p.radii[Math.floor(p.radii.length * 0.5)];
+        ctx.setLineDash([4, 5]);
+        ctx.beginPath();
+        ctx.arc(sp.x, sp.y, medianR * state.cam.scale, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+    ctx.restore();
+  }
+
+  function drawCentralSightOverlay(theme) {
+    const h = state.doc.header;
+    const origin = worldToScreen(0, 0);
+    const maskR = 0.6 * state.cam.scale;
+
+    if (!(state.doc.hasSynthesizedStatic && isLayerVisible('base'))) {
+      ctx.save();
+      ctx.strokeStyle = theme.crosshair;
+      ctx.fillStyle = theme.crosshair;
+      ctx.lineWidth = Math.max(1, (h.lineSizeMult || 1) * 1.1);
+
+      if (h.drawCentralLineVert) {
+        ctx.beginPath();
+        ctx.moveTo(origin.x, origin.y - maskR);
+        ctx.lineTo(origin.x, origin.y + maskR);
+        ctx.stroke();
+      }
+      if (h.drawCentralLineHorz) {
+        ctx.beginPath();
+        ctx.moveTo(origin.x - maskR, origin.y);
+        ctx.lineTo(origin.x + maskR, origin.y);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    drawBallisticScales(theme);
   }
 
   function renderSelectionOverlay() {
@@ -2208,14 +2675,42 @@
     }
 
     const selected = getSelectedEntries();
+    const activeMilScale = getActiveMilUnitScale();
+    const dropCanvas = getPreviewDropCanvas();
+
+    // Draw pivot crosshair for selected moveRadial items
+    for (const { kind, item } of selected) {
+      if (!item.moveRadial) continue;
+      const th = !!item.thousandth;
+      const rc = Array.isArray(item.radialCenter) && item.radialCenter.length >= 2 ? item.radialCenter : [0, 0];
+      const rcx = toCanvasUnit(rc[0], th, activeMilScale);
+      const rcy = toCanvasUnit(rc[1], th, activeMilScale);
+      const sp = worldToScreen(rcx, rcy);
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(sp.x - 7, sp.y); ctx.lineTo(sp.x + 7, sp.y);
+      ctx.moveTo(sp.x, sp.y - 7); ctx.lineTo(sp.x, sp.y + 7);
+      ctx.stroke();
+      if (selected.length === 1) {
+        const pts = getShapePointsCanvas(kind, item);
+        const ref = pts[0] || { x: rcx, y: rcy };
+        const rp = worldToScreen(ref.x, ref.y);
+        ctx.setLineDash([3, 3]);
+        ctx.beginPath();
+        ctx.moveTo(sp.x, sp.y);
+        ctx.lineTo(rp.x, rp.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+      break;
+    }
+
     if (selected.length === 1) {
       const { kind, item } = selected[0];
-      const th = !!item.thousandth;
       if (kind === 'line') {
-        for (const pt of [
-          worldToScreen(toCanvasUnit(item.x1, th), toCanvasUnit(item.y1, th)),
-          worldToScreen(toCanvasUnit(item.x2, th), toCanvasUnit(item.y2, th))
-        ]) {
+        const pts = getShapePointsCanvas('line', item);
+        for (const pt of [worldToScreen(pts[0].x, pts[0].y), worldToScreen(pts[1].x, pts[1].y)]) {
           ctx.beginPath();
           ctx.arc(pt.x, pt.y, 5, 0, Math.PI * 2);
           ctx.fillStyle = '#38bdf8';
@@ -2224,8 +2719,9 @@
           ctx.stroke();
         }
       } else if (kind === 'quad') {
-        for (const k of ['tl', 'tr', 'br', 'bl']) {
-          const pt = worldToScreen(toCanvasUnit(item[k].x, th), toCanvasUnit(item[k].y, th));
+        const pts = getShapePointsCanvas('quad', item);
+        for (let i = 0; i < 4; i++) {
+          const pt = worldToScreen(pts[i].x, pts[i].y);
           ctx.beginPath();
           ctx.arc(pt.x, pt.y, 4.5, 0, Math.PI * 2);
           ctx.fillStyle = '#38bdf8';
@@ -2465,6 +2961,14 @@
     }
 
     if (e.button !== 0) return;
+
+    // Reset rangefinder simulation back to 0m before committing edits so coordinates remain unskewed
+    if (state.rangePreview.active && (state.rangePreview.distance > 0 || state.rangePreview.playing)) {
+      state.rangePreview.playing = false;
+      setPreviewDistance(0);
+      syncRangePreviewUI();
+      showToast('Range Preview reset to 0 m for editing', 'warn');
+    }
 
     const wx = state.pointer.worldX;
     const wy = state.pointer.worldY;
@@ -2765,8 +3269,18 @@
       case 'vertex': {
         const item = state.drag.item;
         const th = !!item.thousandth;
-        const nx = fromCanvasUnit(px, th);
-        const ny = fromCanvasUnit(py, th);
+        const milScale = getActiveMilUnitScale();
+        let vx = px, vy = py;
+        if (Number.isFinite(item.radialAngle) && Math.abs(item.radialAngle) > 1e-6) {
+          const rc = Array.isArray(item.radialCenter) && item.radialCenter.length >= 2 ? item.radialCenter : [0, 0];
+          const rcx = toCanvasUnit(rc[0], th, milScale);
+          const rcy = toCanvasUnit(rc[1], th, milScale);
+          const inv = rotatePointCCW(px, py, rcx, rcy, (-item.radialAngle * Math.PI) / 180);
+          vx = inv.x;
+          vy = inv.y;
+        }
+        const nx = fromCanvasUnit(vx, th, milScale);
+        const ny = fromCanvasUnit(vy, th, milScale);
         if (state.drag.key === 'p1') {
           item.x1 = nx; item.y1 = ny;
         } else if (state.drag.key === 'p2') {
@@ -3051,7 +3565,8 @@
           align: alignVal,
           move: mv,
           thousandth: th,
-          highlight: false
+          highlight: false,
+          ...makeDefaultRadialFields(target.x * sx, target.y * sy)
         });
       }
     }
@@ -4095,12 +4610,16 @@
         state.selection.clear();
         state.lastTraceIds.clear();
         syncHeaderUIFromDoc();
+        syncRadialPanelUIFromDoc();
+        autoConfigurePreviewForDoc();
         resetHistory();
         updateSelectionUI();
         fitView();
         $('activeFileName').textContent = name;
+        const hasRad = docHasRadialFeatures();
         const staticMsg = parsed.hasSynthesizedStatic ? ' [Static Crosshair & HUD Synthesized]' : '';
-        showToast(`Loaded ${name} (${parsed.lines.length}L, ${parsed.quads.length}Q, ${parsed.circles.length}C, ${parsed.texts.length}T)${staticMsg}`);
+        const radMsg = hasRad ? ' • Circular Rangefinder detected (try ◎ Range Preview!)' : '';
+        showToast(`Loaded ${name} (${parsed.lines.length}L, ${parsed.quads.length}Q, ${parsed.circles.length}C, ${parsed.texts.length}T)${staticMsg}${radMsg}`);
       }
     } catch (err) {
       console.error(err);
@@ -4307,6 +4826,34 @@
       $('chkSelHighlight').checked = entries.every(({ item }) => !!item.highlight);
     }
 
+    if ($('chkSelMoveRadial')) {
+      $('chkSelMoveRadial').checked = entries.every(({ item }) => !!item.moveRadial);
+      const getSharedNum = (fn) => {
+        const vals = entries.map(({ kind, item }) => fn(kind, item));
+        const first = vals[0];
+        const allSame = vals.every((v) =>
+          (v === undefined && first === undefined) ||
+          (Number.isFinite(v) && Number.isFinite(first) && Math.abs(v - first) < 1e-6)
+        );
+        return { same: allSame, val: first };
+      };
+      const setNumField = (id, res, ph) => {
+        const el = $(id);
+        if (!el) return;
+        if (res.same && Number.isFinite(res.val)) {
+          el.value = String(BlkParser.formatNum(res.val));
+          el.placeholder = ph;
+        } else {
+          el.value = '';
+          el.placeholder = res.same ? ph : 'Mixed';
+        }
+      };
+      setNumField('numSelRadCx', getSharedNum((_k, it) => it.radialCenter?.[0] ?? 0), '0');
+      setNumField('numSelRadCy', getSharedNum((_k, it) => it.radialCenter?.[1] ?? 0), '0');
+      setNumField('numSelRadAngle', getSharedNum((_k, it) => it.radialAngle), 'deg');
+      setNumField('numSelRadSpeed', getSharedNum((_k, it) => it.radialMoveSpeed), 'speed');
+    }
+
     const editor = $('singleItemEditor');
     editor.innerHTML = '';
 
@@ -4400,6 +4947,7 @@
     $('chkSightMask').checked = !!h.drawSightMask;
     $('chkSmoothEdge').checked = !!h.useSmoothEdge;
     if ($('chkDistCorr')) $('chkDistCorr').checked = h.drawDistanceCorrection !== false;
+    if ($('chkApplyCorrGun')) $('chkApplyCorrGun').checked = h.applyCorrectionToGun !== false;
     if ($('selThousandthMode')) $('selThousandthMode').value = h.thousandthMode || 'ussr';
     $('numLineMult').value = h.lineSizeMult;
     $('numFontMult').value = h.fontSizeMult;
@@ -4457,6 +5005,8 @@
       state.selection.clear();
       $('activeFileName').textContent = state.fileName;
       syncHeaderUIFromDoc();
+      syncRadialPanelUIFromDoc();
+      autoConfigurePreviewForDoc();
       resetHistory();
       updateSelectionUI();
       centerOrigin();
@@ -4585,6 +5135,9 @@
     });
     $('chkDefaultMove').addEventListener('change', (e) => { state.options.defaultMove = e.target.checked; });
     $('chkDefaultThousandth').addEventListener('change', (e) => { state.options.defaultThousandth = e.target.checked; });
+    if ($('chkDefaultMoveRadial')) {
+      $('chkDefaultMoveRadial').addEventListener('change', (e) => { state.options.defaultMoveRadial = e.target.checked; });
+    }
 
     // Tool options
     $('selBrushMode').addEventListener('change', (e) => {
@@ -5045,6 +5598,15 @@
     bindHeaderToggle('chkSightMask', 'drawSightMask');
     bindHeaderToggle('chkSmoothEdge', 'useSmoothEdge');
     if ($('chkDistCorr')) bindHeaderToggle('chkDistCorr', 'drawDistanceCorrection');
+    if ($('chkApplyCorrGun')) {
+      $('chkApplyCorrGun').addEventListener('change', (e) => {
+        state.doc.header.applyCorrectionToGun = e.target.checked;
+        state.doc.modifiedHeaderKeys.add('applyCorrectionToGun');
+        if ($('chkRadialApplyGun')) $('chkRadialApplyGun').checked = e.target.checked;
+        pushHistory();
+        requestRender();
+      });
+    }
 
     if ($('selThousandthMode')) {
       $('selThousandthMode').addEventListener('change', (e) => {
@@ -5161,6 +5723,781 @@
     window.addEventListener('focus', () => {
       if (isLocalHost) hotReloadPresetsJs(false);
       if (state.sightsDirHandle) scanLinkedSightsDirHandle(true);
+    });
+  }
+
+  // =========================================================================
+  // Circular Rangefinder Builder & Range Simulation Preview Engine
+  // =========================================================================
+  function docHasRadialFeatures() {
+    const h = state.doc?.header;
+    if (h?.radial) return true;
+    if ((state.doc?.ballistics || []).some((b) => b.radial)) return true;
+    for (const { item } of allShapes()) {
+      if (item.moveRadial) return true;
+    }
+    return false;
+  }
+
+  function getActiveRadialConfig() {
+    if (state.radialTarget && state.radialTarget.startsWith('bullet:')) {
+      const idx = parseInt(state.radialTarget.split(':')[1], 10);
+      const b = state.doc.ballistics?.[idx];
+      if (b) return { cfg: b, isBullet: true, bulletIdx: idx };
+    }
+    state.radialTarget = 'main';
+    return { cfg: state.doc.header, isBullet: false, bulletIdx: -1 };
+  }
+
+  function rebuildRadialTargetDropdown() {
+    const sel = $('selRadialScaleTarget');
+    if (!sel) return;
+    const prev = state.radialTarget || 'main';
+    sel.innerHTML = '';
+    const mainOpt = document.createElement('option');
+    mainOpt.value = 'main';
+    mainOpt.textContent = 'Main Scale (crosshair_distances)';
+    sel.appendChild(mainOpt);
+
+    const bullets = state.doc.ballistics || [];
+    bullets.forEach((b, idx) => {
+      const opt = document.createElement('option');
+      opt.value = `bullet:${idx}`;
+      opt.textContent = `Bullet #${idx + 1}: ${b.bulletType || 'shell'} (${Math.round(b.speed || 900)} m/s)`;
+      sel.appendChild(opt);
+    });
+
+    if (prev.startsWith('bullet:') && bullets[parseInt(prev.split(':')[1], 10)]) {
+      sel.value = prev;
+      state.radialTarget = prev;
+    } else if (bullets.length > 0 && !state.doc.header.radial && prev === 'main') {
+      sel.value = 'bullet:0';
+      state.radialTarget = 'bullet:0';
+    } else {
+      sel.value = 'main';
+      state.radialTarget = 'main';
+    }
+  }
+
+  function syncRadialPanelUIFromDoc() {
+    rebuildRadialTargetDropdown();
+    const { cfg, isBullet } = getActiveRadialConfig();
+    const hasRadial = docHasRadialFeatures();
+
+    const badge = $('radialStatusBadge');
+    if (badge) {
+      const bulletsCount = (state.doc.ballistics || []).filter((b) => b.radial).length;
+      if (bulletsCount > 0) badge.textContent = `${bulletsCount} RING${bulletsCount > 1 ? 'S' : ''}`;
+      else if (state.doc.header.radial) badge.textContent = 'RADIAL';
+      else if (hasRadial) badge.textContent = 'VECTOR';
+      else badge.textContent = 'OFF';
+      badge.classList.toggle('active', hasRadial);
+    }
+
+    if ($('btnRangePreview')) {
+      $('btnRangePreview').classList.toggle('has-radial', hasRadial);
+    }
+
+    if ($('btnRemoveBulletScale')) $('btnRemoveBulletScale').disabled = !isBullet;
+    if ($('radialBulletFields')) $('radialBulletFields').hidden = !isBullet;
+
+    if ($('chkRadialEnabled')) $('chkRadialEnabled').checked = !!cfg.radial;
+    if ($('chkRadialCircleMode')) $('chkRadialCircleMode').checked = !!cfg.circleMode;
+    if ($('chkRadialDrawUpward')) $('chkRadialDrawUpward').checked = cfg.drawUpward !== false;
+    if ($('chkRadialApplyGun')) $('chkRadialApplyGun').checked = state.doc.header.applyCorrectionToGun !== false;
+
+    if (isBullet) {
+      if ($('selBulletType')) $('selBulletType').value = cfg.bulletType || 'apcbc_tank';
+      if ($('numBulletSpeed')) $('numBulletSpeed').value = cfg.speed || 935;
+    }
+
+    const rr = cfg.radialRadius || [70, 1];
+    if ($('numRadialRadius')) $('numRadialRadius').value = rr[0] ?? 70;
+    if ($('chkRadialRadiusMil')) $('chkRadialRadiusMil').checked = rr[1] !== 0;
+    if ($('numRadialAngle')) $('numRadialAngle').value = cfg.radialAngle ?? 180;
+    if ($('numRadialStretch')) $('numRadialStretch').value = cfg.radialStretch ?? 5;
+    const dp = cfg.distancePos || [0, 0];
+    if ($('numRadialPosX')) $('numRadialPosX').value = dp[0] ?? 0;
+    if ($('numRadialPosY')) $('numRadialPosY').value = dp[1] ?? 0;
+    const tp = cfg.textPos || [0.015, 0];
+    if ($('numRadialTextOff')) $('numRadialTextOff').value = tp[0] ?? 0.015;
+  }
+
+  function markRadialTargetModified(isBullet, key) {
+    if (isBullet) {
+      state.doc.modifiedHeaderKeys.add('ballistics');
+    } else if (key) {
+      state.doc.modifiedHeaderKeys.add(key);
+    }
+  }
+
+  function generateDistanceEntries(stepM, maxM, labelEveryM, circleDot = false) {
+    const out = [{ dist: 1, major: 0, minor: circleDot ? 0 : 0 }];
+    const step = Math.max(50, stepM || 100);
+    const maxD = Math.max(step, maxM || 3000);
+    const lblEvery = Math.max(step, labelEveryM || 200);
+    for (let d = step; d <= maxD; d += step) {
+      const isMajor = (d % lblEvery) === 0;
+      out.push({
+        dist: d,
+        major: isMajor ? Math.round(d / 100) : 0,
+        minor: 0
+      });
+    }
+    return out;
+  }
+
+  function buildRadialPreset(templateId) {
+    const doc = BlkParser.createEmptyDoc();
+    doc.hasSynthesizedStatic = true;
+    doc.header.thousandthMode = 'real';
+    doc.header.drawCentralLineVert = false;
+    doc.header.drawCentralLineHorz = false;
+    doc.header.drawDistanceCorrection = false;
+    doc.header.applyCorrectionToGun = false;
+    doc.header.crosshairDistHorSizeMain = [0.03, 0.02];
+    doc.header.crosshairDistHorSizeAdditional = [0.005, 0.003];
+    doc.distances = [];
+
+    for (const k of [
+      'thousandthMode', 'drawCentralLineVert', 'drawCentralLineHorz',
+      'drawDistanceCorrection', 'applyCorrectionToGun', 'crosshair_distances', 'ballistics'
+    ]) {
+      doc.modifiedHeaderKeys.add(k);
+    }
+
+    const addL = (x1, y1, x2, y2, move = false, thousandth = false, extra = {}) => {
+      doc.lines.push({
+        id: BlkParser.nextId('line'),
+        layer: 'base',
+        x1, y1, x2, y2,
+        move, thousandth,
+        ...extra
+      });
+    };
+    const addQ = (tl, tr, br, bl, move = false, thousandth = false, extra = {}) => {
+      doc.quads.push({
+        id: BlkParser.nextId('quad'),
+        layer: 'base',
+        tl, tr, br, bl,
+        move, thousandth,
+        ...extra
+      });
+    };
+
+    // Classic German aiming triangle triad & vertical post (move with range when applyCorrectionToGun=no)
+    const addGermanChevrons = () => {
+      const ch = [
+        [0, 0, 2, 4], [0, 0, -2, 4], [2, 4, -2, 4],
+        [4, 0, 3, 2], [4, 0, 5, 2], [3, 2, 5, 2],
+        [8, 0, 9, 2], [8, 0, 7, 2], [7, 2, 9, 2],
+        [12, 0, 11, 2], [12, 0, 13, 2], [13, 2, 11, 2],
+        [-4, 0, -3, 2], [-4, 0, -5, 2], [-3, 2, -5, 2],
+        [-8, 0, -9, 2], [-8, 0, -7, 2], [-7, 2, -9, 2],
+        [-12, 0, -11, 2], [-12, 0, -13, 2], [-13, 2, -11, 2]
+      ];
+      for (const [x1, y1, x2, y2] of ch) addL(x1, y1, x2, y2, true, true);
+      addL(0, 1, 0, 0.03, true, false);
+    };
+
+    // Fixed 12 o'clock dial reference pointer
+    const addTopIndexPointer = (tipY = -0.178) => {
+      addQ(
+        { x: -0.012, y: tipY - 0.024 },
+        { x: 0.012, y: tipY - 0.024 },
+        { x: 0, y: tipY },
+        { x: 0, y: tipY },
+        false, false
+      );
+    };
+
+    if (templateId === 'tzf12a') {
+      addGermanChevrons();
+      addTopIndexPointer(-0.175);
+      // Secondary HE 5 o'clock fixed marker + dynamic HE pointer
+      addL(0.2, 0, 0.214, 0, false, false, { moveRadial: true, radialCenter: [0, 0], radialAngle: -66, radialMoveSpeed: 0 });
+      addL(0.155, 0, 0.17, 0, false, false, { moveRadial: true, radialCenter: [0, 0], radialAngle: -66, radialMoveSpeed: -0.78 });
+
+      doc.ballistics = [
+        BlkParser.createDefaultBullet({
+          bulletType: 'apcbc_tank',
+          speed: 935,
+          radial: true,
+          circleMode: true,
+          drawUpward: true,
+          radialRadius: [70, 1],
+          radialAngle: 180,
+          radialStretch: 5,
+          textPos: [0.015, 0],
+          distances: generateDistanceEntries(100, 3000, 200, true)
+        }),
+        BlkParser.createDefaultBullet({
+          bulletType: 'he_frag_tank',
+          speed: 700,
+          radial: true,
+          circleMode: true,
+          drawUpward: true,
+          radialRadius: [70, 1],
+          radialAngle: 24,
+          radialStretch: 5,
+          textPos: [-0.015, 0],
+          distances: generateDistanceEntries(100, 2600, 200, true)
+        })
+      ];
+      state.fileName = 'tzf12a_circular_sight.blk';
+    } else if (templateId === 'tzf9b') {
+      addGermanChevrons();
+      addTopIndexPointer(-0.175);
+
+      doc.ballistics = [
+        BlkParser.createDefaultBullet({
+          bulletType: 'apcbc_tank',
+          speed: 773,
+          radial: true,
+          circleMode: true,
+          drawUpward: true,
+          radialRadius: [70, 1],
+          radialAngle: 180,
+          radialStretch: 4.5,
+          textPos: [0.016, 0],
+          distances: generateDistanceEntries(100, 3000, 200, true)
+        }),
+        BlkParser.createDefaultBullet({
+          bulletType: 'he_frag_tank',
+          speed: 700,
+          radial: true,
+          circleMode: false,
+          drawUpward: true,
+          radialRadius: [62, 1],
+          radialAngle: 180,
+          radialStretch: 4.5,
+          textPos: [-0.016, 0],
+          distances: generateDistanceEntries(100, 2400, 200, false)
+        })
+      ];
+      state.fileName = 'tzf9b_tiger_circular.blk';
+    } else {
+      // Modern Radial Tick Dial (All Tanks via top-level radial:b=yes)
+      doc.header.applyCorrectionToGun = true;
+      doc.header.radial = true;
+      doc.header.circleMode = false;
+      doc.header.drawUpward = true;
+      doc.header.radialRadius = [75, 1];
+      doc.header.radialAngle = 180;
+      doc.header.radialStretch = 5;
+      doc.header.textPos = [0.016, 0];
+      doc.header.crosshairDistHorSizeMain = [0.016, 0.01];
+      doc.header.crosshairDistHorSizeAdditional = [0.008, 0.005];
+      doc.distances = generateDistanceEntries(100, 3200, 200, false);
+
+      for (const k of ['radial', 'circleMode', 'drawUpward', 'radialRadius', 'radialAngle', 'radialStretch', 'textPos']) {
+        doc.modifiedHeaderKeys.add(k);
+      }
+
+      // Split crisp central crosshair + top dial index
+      addL(-0.32, 0, -0.012, 0, false, false);
+      addL(0.012, 0, 0.32, 0, false, false);
+      addL(0, -0.14, 0, -0.012, false, false);
+      addL(0, 0.012, 0, 0.25, false, false);
+      addTopIndexPointer(-0.188);
+      state.fileName = 'modern_radial_sight.blk';
+    }
+
+    state.fileHandle = null;
+    state.doc = doc;
+    state.selection.clear();
+    state.lastTraceIds.clear();
+    $('activeFileName').textContent = state.fileName;
+    syncHeaderUIFromDoc();
+    syncRadialPanelUIFromDoc();
+    autoConfigurePreviewForDoc();
+    setRangePreviewOpen(true);
+    resetHistory();
+    updateSelectionUI();
+    fitView();
+    showToast(`Built ${templateId.toUpperCase()} circular rangefinder sight — drag the range slider below!`);
+  }
+
+  function bakeActiveRadialScaleToVectors() {
+    const { cfg, isBullet } = getActiveRadialConfig();
+    if (!cfg.radial || !(cfg.distances || []).length) {
+      showToast('Enable Circular (radial:b) and generate distance marks first', 'warn');
+      return;
+    }
+
+    const milScale = getMilUnitScale();
+    const rr = cfg.radialRadius || [70, 1];
+    const R = rr[1] ? rr[0] * milScale : rr[0];
+    const center = cfg.distancePos || [0, 0];
+    const cx = center[0] || 0;
+    const cy = center[1] || 0;
+    const stretch = (cfg.radialStretch ?? 1) * (cfg.distanceStretch ?? 1);
+    const speed = cfg.speed || state.rangePreview.speed || 935;
+    const dragK = inferDragK(cfg.bulletType, speed);
+    const baseRad = ((cfg.radialAngle ?? 180) * Math.PI) / 180;
+    const upward = cfg.drawUpward !== false;
+    const textOff = cfg.textPos || [0.015, 0];
+
+    // Exact rotational speed calibration matching native radial scale:
+    // deltaTheta = (dropCanvas * stretch) / (milScale * R_units) -> speed = R * stretch / (milScale * rr[0]) = stretch
+    const moveSpeedPerCanvas = rr[1]
+      ? (R * stretch) / (Math.max(0.01, rr[0]) * milScale)
+      : stretch;
+    const signSpeed = upward ? moveSpeedPerCanvas : -moveSpeedPerCanvas;
+
+    let added = 0;
+    for (const d of cfg.distances) {
+      const dropM = computeBallisticDropMrad(d.dist, speed, dragK);
+      const theta = rr[1]
+        ? (dropM * stretch) / Math.max(0.01, rr[0])
+        : (dropM * milScale * stretch) / Math.max(0.01, rr[0]);
+      const phiDeg = ((upward ? baseRad - theta : baseRad + theta) * 180) / Math.PI;
+
+      if (cfg.circleMode) {
+        const diam = d.minor > 0 ? d.minor : (d.major > 0 ? 0.005 : 0.004);
+        state.doc.circles.push({
+          id: BlkParser.nextId('circle'),
+          layer: 'draw',
+          x: cx,
+          y: cy + R,
+          diameter: diam,
+          size: 1.6,
+          startAngle: 0,
+          endAngle: 360,
+          move: false,
+          thousandth: false,
+          moveRadial: true,
+          radialCenter: [cx, cy],
+          radialAngle: Number((phiDeg).toFixed(3)),
+          radialMoveSpeed: Number(signSpeed.toFixed(6))
+        });
+        added++;
+      } else {
+        const tickLen = d.major > 0 ? Math.max(0.008, cfg.crosshairDistHorSizeMain?.[0] ?? 0.014) : Math.max(0.004, cfg.crosshairDistHorSizeAdditional?.[0] ?? 0.007);
+        state.doc.lines.push({
+          id: BlkParser.nextId('line'),
+          layer: 'draw',
+          x1: cx,
+          y1: cy + R,
+          x2: cx,
+          y2: cy + R + tickLen,
+          move: false,
+          thousandth: false,
+          moveRadial: true,
+          radialCenter: [cx, cy],
+          radialAngle: Number(phiDeg.toFixed(3)),
+          radialMoveSpeed: Number(signSpeed.toFixed(6))
+        });
+        added++;
+      }
+
+      if (d.major > 0) {
+        const labelR = R + (textOff[0] || 0.015);
+        const labelSpeed = signSpeed * (labelR / Math.max(0.01, R));
+        state.doc.texts.push({
+          id: BlkParser.nextId('text'),
+          layer: 'draw',
+          text: String(d.major),
+          x: cx + (textOff[1] || 0),
+          y: cy + labelR,
+          size: 0.72,
+          align: cfg.textAlign || 0,
+          move: false,
+          thousandth: false,
+          highlight: false,
+          moveRadial: true,
+          radialCenter: [cx, cy],
+          radialAngle: Number(phiDeg.toFixed(3)),
+          radialMoveSpeed: Number(labelSpeed.toFixed(6))
+        });
+        added++;
+      }
+    }
+
+    // Turn off the source native radial ring so shapes aren't doubled
+    cfg.radial = false;
+    if (isBullet) {
+      const idx = state.doc.ballistics.indexOf(cfg);
+      if (idx !== -1) state.doc.ballistics.splice(idx, 1);
+      state.doc.modifiedHeaderKeys.add('ballistics');
+      state.radialTarget = 'main';
+    } else {
+      state.doc.modifiedHeaderKeys.add('radial');
+    }
+
+    pushHistory();
+    syncRadialPanelUIFromDoc();
+    updateSelectionUI();
+    requestRender();
+    showToast(`Baked ${added} editable moveRadial shapes into Drawn Layer`);
+  }
+
+  function syncPreviewShellOptions() {
+    const sel = $('selPreviewShell');
+    if (!sel) return;
+    const prev = sel.value;
+    // Keep built-in options and rebuild dynamic bullet options
+    Array.from(sel.querySelectorAll('option[data-doc-bullet="1"]')).forEach((o) => o.remove());
+    const bullets = state.doc.ballistics || [];
+    bullets.forEach((b, idx) => {
+      const opt = document.createElement('option');
+      opt.value = `doc_bullet:${idx}`;
+      opt.dataset.docBullet = '1';
+      opt.textContent = `Sight Bullet #${idx + 1}: ${b.bulletType} (${Math.round(b.speed)} m/s)`;
+      sel.appendChild(opt);
+    });
+    if (Array.from(sel.options).some((o) => o.value === prev)) {
+      sel.value = prev;
+    } else {
+      sel.value = 'auto';
+    }
+  }
+
+  function autoConfigurePreviewForDoc() {
+    syncPreviewShellOptions();
+    const bullets = state.doc.ballistics || [];
+    let speed = 935;
+    let dragK = 0.00011;
+    let maxD = 3200;
+
+    if (bullets.length > 0) {
+      speed = bullets[0].speed || 935;
+      dragK = inferDragK(bullets[0].bulletType, speed);
+      const maxFromBullet = Math.max(...bullets.flatMap((b) => (b.distances || []).map((d) => d.dist || 0)), 0);
+      if (maxFromBullet >= 600) maxD = Math.min(6000, Math.ceil(maxFromBullet / 200) * 200);
+    } else if (state.doc.distances && state.doc.distances.length > 0) {
+      const maxFromMain = Math.max(...state.doc.distances.map((d) => d.dist || 0), 0);
+      if (maxFromMain >= 600) maxD = Math.min(6000, Math.ceil(maxFromMain / 200) * 200);
+    }
+
+    state.rangePreview.speed = speed;
+    state.rangePreview.dragK = dragK;
+    state.rangePreview.maxDistance = maxD;
+    state.rangePreview.distance = 0;
+    state.rangePreview.playing = false;
+
+    const autoOpt = $('selPreviewShell')?.querySelector('option[value="auto"]');
+    if (autoOpt) autoOpt.textContent = `Auto (${Math.round(speed)} m/s)`;
+    if ($('selPreviewShell')) $('selPreviewShell').value = bullets.length > 0 ? 'doc_bullet:0' : 'auto';
+    if ($('rngPreviewDist')) $('rngPreviewDist').max = String(maxD);
+    syncRangePreviewUI();
+  }
+
+  function setPreviewDistance(dist) {
+    state.rangePreview.distance = Math.max(0, Math.min(state.rangePreview.maxDistance, dist));
+    updatePreviewReadouts();
+    requestRender();
+  }
+
+  function updatePreviewReadouts() {
+    const d = Math.round(state.rangePreview.distance);
+    const dropM = computeBallisticDropMrad(d, state.rangePreview.speed, state.rangePreview.dragK);
+    if ($('rngPreviewDist')) $('rngPreviewDist').value = String(d);
+    if ($('lblPreviewDist')) $('lblPreviewDist').textContent = `${d} m`;
+    if ($('lblPreviewDrop')) $('lblPreviewDrop').textContent = `${dropM.toFixed(1)} mil`;
+  }
+
+  function syncRangePreviewUI() {
+    const active = state.rangePreview.active;
+    if ($('rangePreviewBar')) $('rangePreviewBar').hidden = !active;
+    if ($('btnRangePreview')) $('btnRangePreview').classList.toggle('preview-active', active);
+    if ($('btnRangePlay')) {
+      $('btnRangePlay').textContent = state.rangePreview.playing ? '⏸' : '▶';
+      $('btnRangePlay').classList.toggle('playing', state.rangePreview.playing);
+    }
+    if ($('numPreviewSpeed')) $('numPreviewSpeed').value = String(Math.round(state.rangePreview.speed));
+    if ($('rngPreviewZoom')) $('rngPreviewZoom').value = String(state.rangePreview.zoomMult);
+    if ($('lblPreviewZoom')) $('lblPreviewZoom').textContent = `${state.rangePreview.zoomMult.toFixed(2)}x`;
+    if ($('chkPreviewGuides')) $('chkPreviewGuides').checked = !!state.rangePreview.showGuides;
+    updatePreviewReadouts();
+  }
+
+  function setRangePreviewOpen(open) {
+    state.rangePreview.active = !!open;
+    if (!open) {
+      state.rangePreview.playing = false;
+      state.rangePreview.distance = 0;
+      state.rangePreview.zoomMult = 1.0;
+    } else {
+      syncPreviewShellOptions();
+    }
+    syncRangePreviewUI();
+    requestRender();
+  }
+
+  function initRadialAndPreviewControls() {
+    $('btnRangePreview')?.addEventListener('click', () => {
+      setRangePreviewOpen(!state.rangePreview.active);
+    });
+    $('btnOpenRangePreview')?.addEventListener('click', () => {
+      setRangePreviewOpen(true);
+      if (state.rangePreview.distance === 0) {
+        state.rangePreview.playing = true;
+        syncRangePreviewUI();
+      }
+    });
+    $('btnRangeClose')?.addEventListener('click', () => setRangePreviewOpen(false));
+    $('btnRangeReset')?.addEventListener('click', () => {
+      state.rangePreview.playing = false;
+      setPreviewDistance(0);
+      syncRangePreviewUI();
+    });
+    $('btnRangePlay')?.addEventListener('click', () => {
+      if (!state.rangePreview.active) setRangePreviewOpen(true);
+      state.rangePreview.playing = !state.rangePreview.playing;
+      state.rangePreview.lastTs = 0;
+      syncRangePreviewUI();
+    });
+    $('rngPreviewDist')?.addEventListener('input', (e) => {
+      state.rangePreview.playing = false;
+      setPreviewDistance(parseFloat(e.target.value) || 0);
+      syncRangePreviewUI();
+    });
+    $('selPreviewShell')?.addEventListener('change', (e) => {
+      const val = e.target.value;
+      const presets = {
+        panther_apcbc: { speed: 935, dragK: 0.00011 },
+        tiger_aphe: { speed: 773, dragK: 0.00011 },
+        he_700: { speed: 700, dragK: 0.00016 },
+        apcr_1120: { speed: 1120, dragK: 0.00010 },
+        apfsds_1650: { speed: 1650, dragK: 0.000045 }
+      };
+      if (val.startsWith('doc_bullet:')) {
+        const b = state.doc.ballistics?.[parseInt(val.split(':')[1], 10)];
+        if (b) {
+          state.rangePreview.speed = b.speed || 935;
+          state.rangePreview.dragK = inferDragK(b.bulletType, state.rangePreview.speed);
+        }
+      } else if (presets[val]) {
+        state.rangePreview.speed = presets[val].speed;
+        state.rangePreview.dragK = presets[val].dragK;
+      } else {
+        const firstB = state.doc.ballistics?.[0];
+        state.rangePreview.speed = firstB?.speed || 935;
+        state.rangePreview.dragK = inferDragK(firstB?.bulletType, state.rangePreview.speed);
+      }
+      syncRangePreviewUI();
+      requestRender();
+    });
+    $('numPreviewSpeed')?.addEventListener('change', (e) => {
+      state.rangePreview.speed = Math.max(100, Math.min(2500, parseFloat(e.target.value) || 935));
+      state.rangePreview.dragK = inferDragK('', state.rangePreview.speed);
+      syncRangePreviewUI();
+      requestRender();
+    });
+    $('rngPreviewZoom')?.addEventListener('input', (e) => {
+      state.rangePreview.zoomMult = parseFloat(e.target.value) || 1;
+      syncRangePreviewUI();
+      requestRender();
+    });
+    $('chkPreviewGuides')?.addEventListener('change', (e) => {
+      state.rangePreview.showGuides = e.target.checked;
+      requestRender();
+    });
+
+    // Circular Rangefinder Builder Panel
+    $('btnBuildRadialPreset')?.addEventListener('click', () => {
+      buildRadialPreset($('selRadialTemplate')?.value || 'tzf12a');
+    });
+
+    $('selRadialScaleTarget')?.addEventListener('change', (e) => {
+      state.radialTarget = e.target.value;
+      syncRadialPanelUIFromDoc();
+    });
+
+    $('btnAddBulletScale')?.addEventListener('click', () => {
+      const idx = state.doc.ballistics.length;
+      const offsetAngle = idx === 0 ? 180 : (24 + (idx - 1) * 90);
+      const b = BlkParser.createDefaultBullet({
+        bulletType: idx === 0 ? 'apcbc_tank' : 'he_frag_tank',
+        speed: idx === 0 ? 935 : 700,
+        radialAngle: offsetAngle,
+        textPos: [idx % 2 === 0 ? 0.015 : -0.015, 0]
+      });
+      state.doc.ballistics.push(b);
+      state.doc.modifiedHeaderKeys.add('ballistics');
+      state.radialTarget = `bullet:${idx}`;
+      pushHistory();
+      syncRadialPanelUIFromDoc();
+      syncPreviewShellOptions();
+      requestRender();
+      showToast(`Added Ballistic Ring #${idx + 1}`);
+    });
+
+    $('btnRemoveBulletScale')?.addEventListener('click', () => {
+      if (!state.radialTarget.startsWith('bullet:')) return;
+      const idx = parseInt(state.radialTarget.split(':')[1], 10);
+      if (Number.isFinite(idx) && state.doc.ballistics[idx]) {
+        state.doc.ballistics.splice(idx, 1);
+        state.doc.modifiedHeaderKeys.add('ballistics');
+        state.radialTarget = state.doc.ballistics.length > 0 ? 'bullet:0' : 'main';
+        pushHistory();
+        syncRadialPanelUIFromDoc();
+        syncPreviewShellOptions();
+        requestRender();
+      }
+    });
+
+    const bindRadialCfg = (elId, handler, headerKey, renderEvent = 'change') => {
+      $(elId)?.addEventListener(renderEvent, (e) => {
+        const { cfg, isBullet } = getActiveRadialConfig();
+        handler(cfg, e.target);
+        markRadialTargetModified(isBullet, headerKey);
+        if (renderEvent === 'change') pushHistory();
+        syncRadialPanelUIFromDoc();
+        syncPreviewShellOptions();
+        requestRender();
+      });
+    };
+
+    bindRadialCfg('chkRadialEnabled', (cfg, el) => {
+      cfg.radial = el.checked;
+      if (el.checked && (!(cfg.distances) || cfg.distances.length === 0)) {
+        cfg.distances = generateDistanceEntries(100, 3000, 200, !!cfg.circleMode);
+        if (cfg === state.doc.header) state.doc.modifiedHeaderKeys.add('crosshair_distances');
+      }
+    }, 'radial');
+    bindRadialCfg('chkRadialCircleMode', (cfg, el) => { cfg.circleMode = el.checked; }, 'circleMode');
+    bindRadialCfg('chkRadialDrawUpward', (cfg, el) => { cfg.drawUpward = el.checked; }, 'drawUpward');
+
+    $('chkRadialApplyGun')?.addEventListener('change', (e) => {
+      state.doc.header.applyCorrectionToGun = e.target.checked;
+      state.doc.modifiedHeaderKeys.add('applyCorrectionToGun');
+      if ($('chkApplyCorrGun')) $('chkApplyCorrGun').checked = e.target.checked;
+      pushHistory();
+      requestRender();
+    });
+
+    bindRadialCfg('selBulletType', (cfg, el) => { cfg.bulletType = el.value; }, null);
+    bindRadialCfg('numBulletSpeed', (cfg, el) => { cfg.speed = Math.max(100, Math.min(2500, parseFloat(el.value) || 935)); }, null);
+    bindRadialCfg('numRadialRadius', (cfg, el) => {
+      const rr = cfg.radialRadius || [70, 1];
+      cfg.radialRadius = [Math.max(0.01, parseFloat(el.value) || 70), rr[1] ?? 1];
+    }, 'radialRadius');
+    bindRadialCfg('chkRadialRadiusMil', (cfg, el) => {
+      const rr = cfg.radialRadius || [70, 1];
+      cfg.radialRadius = [rr[0] ?? 70, el.checked ? 1 : 0];
+    }, 'radialRadius');
+    bindRadialCfg('numRadialAngle', (cfg, el) => { cfg.radialAngle = parseFloat(el.value) || 0; }, 'radialAngle');
+    bindRadialCfg('numRadialStretch', (cfg, el) => { cfg.radialStretch = Math.max(0.05, parseFloat(el.value) || 1); }, 'radialStretch');
+    bindRadialCfg('numRadialPosX', (cfg, el) => {
+      const dp = cfg.distancePos || [0, 0];
+      cfg.distancePos = [parseFloat(el.value) || 0, dp[1] || 0];
+    }, 'distancePos');
+    bindRadialCfg('numRadialPosY', (cfg, el) => {
+      const dp = cfg.distancePos || [0, 0];
+      cfg.distancePos = [dp[0] || 0, parseFloat(el.value) || 0];
+    }, 'distancePos');
+    bindRadialCfg('numRadialTextOff', (cfg, el) => {
+      const tp = cfg.textPos || [0.015, 0];
+      cfg.textPos = [parseFloat(el.value) || 0, tp[1] || 0];
+    }, 'textPos');
+
+    $('btnApplyRadialTicks')?.addEventListener('click', () => {
+      const { cfg, isBullet } = getActiveRadialConfig();
+      const step = parseFloat($('numRadialStep')?.value) || 100;
+      const maxD = parseFloat($('numRadialMax')?.value) || 3000;
+      const lblEvery = parseFloat($('numRadialLabelStep')?.value) || 200;
+      cfg.distances = generateDistanceEntries(step, maxD, lblEvery, !!cfg.circleMode);
+      cfg.radial = true;
+      markRadialTargetModified(isBullet, 'radial');
+      if (!isBullet) state.doc.modifiedHeaderKeys.add('crosshair_distances');
+      pushHistory();
+      syncRadialPanelUIFromDoc();
+      requestRender();
+      showToast(`Generated ${cfg.distances.length - 1} circular distance marks (up to ${maxD}m)`);
+    });
+
+    $('btnAddRadialPointer')?.addEventListener('click', () => {
+      const { cfg } = getActiveRadialConfig();
+      const milScale = getMilUnitScale();
+      const rr = cfg.radialRadius || [70, 1];
+      const R = rr[1] ? rr[0] * milScale : rr[0];
+      const cx = cfg.distancePos?.[0] || 0;
+      const cy = cfg.distancePos?.[1] || 0;
+      const tipY = cy - R;
+      state.doc.quads.push({
+        id: BlkParser.nextId('quad'),
+        layer: 'draw',
+        tl: { x: cx - 0.012, y: tipY - 0.024 },
+        tr: { x: cx + 0.012, y: tipY - 0.024 },
+        br: { x: cx, y: tipY },
+        bl: { x: cx, y: tipY },
+        move: false,
+        thousandth: false
+      });
+      pushHistory();
+      requestRender();
+      showToast('Added 12 o\'clock dial index pointer');
+    });
+
+    $('btnBakeRadialShapes')?.addEventListener('click', bakeActiveRadialScaleToVectors);
+
+    // Selection & CAD per-element moveRadial controls
+    $('chkSelMoveRadial')?.addEventListener('change', (e) => {
+      const checked = e.target.checked;
+      for (const { item } of getSelectedEntries()) {
+        item.moveRadial = checked;
+        if (checked && !Array.isArray(item.radialCenter)) item.radialCenter = [0, 0];
+        if (checked && !Number.isFinite(item.radialAngle)) item.radialAngle = 0;
+        if (checked && !Number.isFinite(item.radialMoveSpeed)) item.radialMoveSpeed = 1;
+      }
+      pushHistory();
+      syncRadialPanelUIFromDoc();
+      updateSelectionUI();
+      requestRender();
+    });
+
+    $('btnSelRadApply')?.addEventListener('click', () => {
+      const entries = getSelectedEntries();
+      if (entries.length === 0) return;
+      const cxStr = $('numSelRadCx')?.value.trim() ?? '';
+      const cyStr = $('numSelRadCy')?.value.trim() ?? '';
+      const angStr = $('numSelRadAngle')?.value.trim() ?? '';
+      const spdStr = $('numSelRadSpeed')?.value.trim() ?? '';
+
+      for (const { item } of entries) {
+        if (isLayerLocked(item.layer)) continue;
+        item.moveRadial = !!$('chkSelMoveRadial')?.checked;
+        const curC = Array.isArray(item.radialCenter) ? item.radialCenter : [0, 0];
+        const nx = cxStr !== '' ? (parseFloat(cxStr) || 0) : curC[0];
+        const ny = cyStr !== '' ? (parseFloat(cyStr) || 0) : curC[1];
+        item.radialCenter = [nx, ny];
+        if (angStr !== '') item.radialAngle = parseFloat(angStr) || 0;
+        if (spdStr !== '') item.radialMoveSpeed = parseFloat(spdStr) || 0;
+      }
+      pushHistory();
+      syncRadialPanelUIFromDoc();
+      updateSelectionUI();
+      requestRender();
+      showToast(`Applied radial settings to ${entries.length} element(s)`);
+    });
+
+    $('btnSelRadSyncRigid')?.addEventListener('click', () => {
+      const entries = getSelectedEntries().filter(({ item }) => !isLayerLocked(item.layer));
+      if (entries.length === 0) return;
+      const mult = parseFloat($('numSelRadMult')?.value) || 20.64;
+      const cxStr = $('numSelRadCx')?.value.trim() ?? '';
+      const cyStr = $('numSelRadCy')?.value.trim() ?? '';
+      const milScale = getMilUnitScale();
+
+      for (const { kind, item } of entries) {
+        item.moveRadial = true;
+        const curC = Array.isArray(item.radialCenter) ? item.radialCenter : [0, 0];
+        const rcx = cxStr !== '' ? (parseFloat(cxStr) || 0) : curC[0];
+        const rcy = cyStr !== '' ? (parseFloat(cyStr) || 0) : curC[1];
+        item.radialCenter = [rcx, rcy];
+        const th = !!item.thousandth;
+        const ref = getElementBaseRefCanvas(kind, item, milScale);
+        const r = Math.hypot(ref.x - toCanvasUnit(rcx, th, milScale), ref.y - toCanvasUnit(rcy, th, milScale));
+        item.radialMoveSpeed = Number((mult * Math.max(0.01, r)).toFixed(6));
+      }
+      if ($('chkSelMoveRadial')) $('chkSelMoveRadial').checked = true;
+      pushHistory();
+      syncRadialPanelUIFromDoc();
+      updateSelectionUI();
+      requestRender();
+      showToast(`Synced rigid radialMoveSpeed (${mult}×r) on ${entries.length} element(s)`);
     });
   }
 
@@ -5326,7 +6663,31 @@
     requestRender();
   }
 
-  function loop() {
+  function loop(ts) {
+    if (state.rangePreview.active && state.rangePreview.playing) {
+      if (state.rangePreview.lastTs) {
+        const dt = Math.min(0.05, (ts - state.rangePreview.lastTs) / 1000);
+        if (ts >= state.rangePreview.pauseUntil) {
+          let nextD = state.rangePreview.distance + state.rangePreview.playDir * 550 * dt;
+          if (nextD >= state.rangePreview.maxDistance) {
+            nextD = state.rangePreview.maxDistance;
+            state.rangePreview.playDir = -1;
+            state.rangePreview.pauseUntil = ts + 500;
+          } else if (nextD <= 0) {
+            nextD = 0;
+            state.rangePreview.playDir = 1;
+            state.rangePreview.pauseUntil = ts + 500;
+          }
+          state.rangePreview.distance = nextD;
+          updatePreviewReadouts();
+          needsRender = true;
+        }
+      }
+      state.rangePreview.lastTs = ts;
+    } else {
+      state.rangePreview.lastTs = 0;
+    }
+
     if (needsRender) render();
     requestAnimationFrame(loop);
   }
@@ -5335,6 +6696,7 @@
   // Boot
   // =========================================================================
   initUI();
+  initRadialAndPreviewControls();
   resizeCanvas();
   window.addEventListener('resize', resizeCanvas);
   window.addEventListener('load', resizeCanvas);
