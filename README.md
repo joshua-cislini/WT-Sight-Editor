@@ -420,6 +420,12 @@ Maps directly to War Thunder's top-level `.blk` header properties and blocks:
 
 ---
 
+## Credits
+
+Created by **[joshua-cislini](https://github.com/joshua-cislini)**.
+
+---
+
 ## Disclaimer
 
 Portions of this project, including parts of the code, styling, and documentation, were created with the assistance of AI.

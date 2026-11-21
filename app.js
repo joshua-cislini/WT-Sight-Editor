@@ -322,6 +322,40 @@
     }, 3400);
   }
 
+  function showTaskProgress(title, detail = '', pct = null) {
+    const overlay = $('taskProgressOverlay');
+    if (!overlay) return;
+    $('taskProgressTitle').textContent = title || 'Processing...';
+    updateTaskProgress(detail, pct);
+    overlay.hidden = false;
+  }
+
+  function updateTaskProgress(detail = '', pct = null) {
+    const detailEl = $('taskProgressDetail');
+    const barEl = $('taskProgressBar');
+    const pctEl = $('taskProgressPct');
+    if (detailEl) detailEl.textContent = detail || '';
+    if (!barEl || !pctEl) return;
+    if (pct === null || pct === undefined || !Number.isFinite(pct)) {
+      barEl.classList.add('indeterminate');
+      pctEl.textContent = '...';
+    } else {
+      const clamped = Math.max(0, Math.min(100, Math.round(pct)));
+      barEl.classList.remove('indeterminate');
+      barEl.style.width = `${clamped}%`;
+      pctEl.textContent = `${clamped}%`;
+    }
+  }
+
+  function hideTaskProgress() {
+    const overlay = $('taskProgressOverlay');
+    if (overlay) overlay.hidden = true;
+  }
+
+  function nextPaintFrame() {
+    return new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
+  }
+
   function requestRender() {
     needsRender = true;
   }
@@ -5826,9 +5860,69 @@
     // endMatch.get("edgeIdx:0|1") => partner "edgeIdx:0|1"
     const endMatch = new Map();
     const unmergedTStems = []; // { edgeIdx, atStart, junctionNodeId }
+    const consumedEdge = new Uint8Array(rawEdges.length);
+
+    // 5a. Collapse short fused bridges between pairs of degree-3 Y-junctions (acute < 45-deg X-crossings)
+    for (let bi = 0; bi < rawEdges.length; bi++) {
+      if (consumedEdge[bi]) continue;
+      const be = rawEdges[bi];
+      const n1 = be.startNode, n2 = be.endNode;
+      if (n1 < 0 || n2 < 0 || n1 === n2) continue;
+      if (!nodes[n1].isJunction || !nodes[n2].isJunction) continue;
+      const list1 = nodeInc.get(n1) || [];
+      const list2 = nodeInc.get(n2) || [];
+      if (list1.length !== 3 || list2.length !== 3) continue;
+      if (be.pts.length > 18) continue;
+      const spanDist = Math.hypot(nodes[n1].centroid.x - nodes[n2].centroid.x, nodes[n1].centroid.y - nodes[n2].centroid.y);
+      if (spanDist > 16) continue;
+
+      const arms1 = list1.filter((inc) => inc.edgeIdx !== bi);
+      const arms2 = list2.filter((inc) => inc.edgeIdx !== bi);
+      if (arms1.length !== 2 || arms2.length !== 2) continue;
+
+      const d10 = edgeOutwardDir(arms1[0].edgeIdx, arms1[0].atStart);
+      const d11 = edgeOutwardDir(arms1[1].edgeIdx, arms1[1].atStart);
+      const d20 = edgeOutwardDir(arms2[0].edgeIdx, arms2[0].atStart);
+      const d21 = edgeOutwardDir(arms2[1].edgeIdx, arms2[1].atStart);
+
+      const sA1 = -(d10.x * d20.x + d10.y * d20.y);
+      const sA2 = -(d11.x * d21.x + d11.y * d21.y);
+      const sB1 = -(d10.x * d21.x + d10.y * d21.y);
+      const sB2 = -(d11.x * d20.x + d11.y * d20.y);
+
+      const validA = sA1 >= 0.72 && sA2 >= 0.72;
+      const validB = sB1 >= 0.72 && sB2 >= 0.72;
+      if (!validA && !validB) continue;
+
+      const useB = validB && (!validA || (sB1 + sB2 > sA1 + sA2));
+      const p1 = { a: arms1[0], b: useB ? arms2[1] : arms2[0] };
+      const p2 = { a: arms1[1], b: useB ? arms2[0] : arms2[1] };
+
+      const ka1 = `${p1.a.edgeIdx}:${p1.a.atStart ? 0 : 1}`;
+      const kb1 = `${p1.b.edgeIdx}:${p1.b.atStart ? 0 : 1}`;
+      const ka2 = `${p2.a.edgeIdx}:${p2.a.atStart ? 0 : 1}`;
+      const kb2 = `${p2.b.edgeIdx}:${p2.b.atStart ? 0 : 1}`;
+      if (endMatch.has(ka1) || endMatch.has(kb1) || endMatch.has(ka2) || endMatch.has(kb2)) continue;
+
+      const mid = {
+        x: (nodes[n1].centroid.x + nodes[n2].centroid.x) * 0.5,
+        y: (nodes[n1].centroid.y + nodes[n2].centroid.y) * 0.5
+      };
+      const snapEnd = (inc) => {
+        const pts = rawEdges[inc.edgeIdx].pts;
+        if (inc.atStart) pts[0] = { x: mid.x, y: mid.y };
+        else pts[pts.length - 1] = { x: mid.x, y: mid.y };
+      };
+      snapEnd(p1.a); snapEnd(p1.b); snapEnd(p2.a); snapEnd(p2.b);
+
+      endMatch.set(ka1, kb1); endMatch.set(kb1, ka1);
+      endMatch.set(ka2, kb2); endMatch.set(kb2, ka2);
+      consumedEdge[bi] = 1;
+    }
 
     for (const [nodeId, list] of nodeInc.entries()) {
-      const dirsList = list.map((inc) => ({ ...inc, dir: edgeOutwardDir(inc.edgeIdx, inc.atStart) }));
+      const activeList = list.filter((inc) => !consumedEdge[inc.edgeIdx]);
+      const dirsList = activeList.map((inc) => ({ ...inc, dir: edgeOutwardDir(inc.edgeIdx, inc.atStart) }));
       const pairs = [];
       for (let a = 0; a < dirsList.length; a++) {
         for (let b = a + 1; b < dirsList.length; b++) {
@@ -5845,22 +5939,21 @@
       for (const p of pairs) {
         const ka = `${p.a.edgeIdx}:${p.a.atStart ? 0 : 1}`;
         const kb = `${p.b.edgeIdx}:${p.b.atStart ? 0 : 1}`;
-        if (usedEnd.has(ka) || usedEnd.has(kb)) continue;
+        if (endMatch.has(ka) || endMatch.has(kb) || usedEnd.has(ka) || usedEnd.has(kb)) continue;
         usedEnd.add(ka);
         usedEnd.add(kb);
         endMatch.set(ka, kb);
         endMatch.set(kb, ka);
       }
-      for (const inc of list) {
+      for (const inc of activeList) {
         const k = `${inc.edgeIdx}:${inc.atStart ? 0 : 1}`;
-        if (!usedEnd.has(k)) {
+        if (!usedEnd.has(k) && !endMatch.has(k)) {
           unmergedTStems.push({ edgeIdx: inc.edgeIdx, atStart: inc.atStart, junctionNodeId: nodeId });
         }
       }
     }
 
     // Stitch paired edges into long unbroken strokes
-    const consumedEdge = new Uint8Array(rawEdges.length);
     const outChains = [];
 
     function appendEdgePts(targetPts, edgeIdx, forward) {
@@ -6083,7 +6176,7 @@
       for (let j = i - 1; j >= 0; j--) {
         const p = items[j];
         if (c.minX < p.minX || c.maxX > p.maxX || c.minY < p.minY || c.maxY > p.maxY) continue;
-        if (pointInPolygon(c.testPt, p.pts)) {
+        if (pointInPolygon(c.testPt.x, c.testPt.y, p.pts)) {
           depth++;
           if (parentIdx === -1) parentIdx = j;
         }
@@ -6702,6 +6795,9 @@
 
   function scheduleLiveTracePreview() {
     if (!state.refImage.img) return;
+    if ($('chkTraceLivePreview')?.checked && $('tracePreviewStats')) {
+      $('tracePreviewStats').textContent = 'Tracing...';
+    }
     if (state.tracePreview.timer) clearTimeout(state.tracePreview.timer);
     state.tracePreview.timer = setTimeout(() => {
       const res = computeImageVectorTrace();
@@ -6714,66 +6810,76 @@
     }, 36);
   }
 
-  function commitAutoTraceToDocument() {
+  async function commitAutoTraceToDocument() {
     if (!state.refImage.img) return;
-    const res = computeImageVectorTrace();
-    if (res.lines.length === 0 && res.quads.length === 0) {
-      showToast('No strokes detected. Try raising Sensitivity or toggling Invert B/W', 'warn');
-      return;
+    showTaskProgress('Auto-Drawing Image...', state.refImage.name || 'Vectorizing strokes', 15);
+    try {
+      await nextPaintFrame();
+      const res = computeImageVectorTrace();
+      if (res.lines.length === 0 && res.quads.length === 0) {
+        showToast('No strokes detected. Try raising Sensitivity or toggling Invert B/W', 'warn');
+        return;
+      }
+
+      updateTaskProgress(`Adding ${res.lines.length} lines & ${res.quads.length} quads...`, 70);
+      await nextPaintFrame();
+
+      if ($('chkTraceReplace').checked && state.lastTraceIds.size > 0) {
+        state.doc.lines = state.doc.lines.filter((l) => !state.lastTraceIds.has(l.id));
+        state.doc.quads = state.doc.quads.filter((q) => !state.lastTraceIds.has(q.id));
+        state.lastTraceIds.clear();
+      }
+
+      const targetLayer = $('selTraceLayer').value || 'draw';
+      const th = state.options.defaultThousandth;
+      const mv = state.options.defaultMoveRadial ? false : state.options.defaultMove;
+      const newBatchIds = new Set();
+
+      for (const l of res.lines) {
+        const id = BlkParser.nextId('line');
+        newBatchIds.add(id);
+        state.doc.lines.push({
+          id,
+          layer: targetLayer,
+          x1: fromCanvasUnit(l.x1, th),
+          y1: fromCanvasUnit(l.y1, th),
+          x2: fromCanvasUnit(l.x2, th),
+          y2: fromCanvasUnit(l.y2, th),
+          move: mv,
+          thousandth: th,
+          ...makeDefaultRadialFields((l.x1 + l.x2) * 0.5, (l.y1 + l.y2) * 0.5)
+        });
+      }
+
+      for (const q of res.quads) {
+        const id = BlkParser.nextId('quad');
+        newBatchIds.add(id);
+        state.doc.quads.push({
+          id,
+          layer: targetLayer,
+          tl: { x: fromCanvasUnit(q.tl.x, th), y: fromCanvasUnit(q.tl.y, th) },
+          tr: { x: fromCanvasUnit(q.tr.x, th), y: fromCanvasUnit(q.tr.y, th) },
+          br: { x: fromCanvasUnit(q.br.x, th), y: fromCanvasUnit(q.br.y, th) },
+          bl: { x: fromCanvasUnit(q.bl.x, th), y: fromCanvasUnit(q.bl.y, th) },
+          move: mv,
+          thousandth: th,
+          ...makeDefaultRadialFields(
+            (q.tl.x + q.tr.x + q.br.x + q.bl.x) * 0.25,
+            (q.tl.y + q.tr.y + q.br.y + q.bl.y) * 0.25
+          )
+        });
+      }
+
+      updateTaskProgress('Done', 100);
+      state.lastTraceIds = newBatchIds;
+      $('btnUndoTrace').disabled = false;
+      $('chkTraceLivePreview').checked = false;
+      pushHistory();
+      requestRender();
+      showToast(`Auto-drew ${res.lines.length} lines${res.quads.length ? ` & ${res.quads.length} quads` : ''} into ${targetLayer === 'base' ? 'Base' : 'Drawn'} layer`);
+    } finally {
+      hideTaskProgress();
     }
-
-    if ($('chkTraceReplace').checked && state.lastTraceIds.size > 0) {
-      state.doc.lines = state.doc.lines.filter((l) => !state.lastTraceIds.has(l.id));
-      state.doc.quads = state.doc.quads.filter((q) => !state.lastTraceIds.has(q.id));
-      state.lastTraceIds.clear();
-    }
-
-    const targetLayer = $('selTraceLayer').value || 'draw';
-    const th = state.options.defaultThousandth;
-    const mv = state.options.defaultMoveRadial ? false : state.options.defaultMove;
-    const newBatchIds = new Set();
-
-    for (const l of res.lines) {
-      const id = BlkParser.nextId('line');
-      newBatchIds.add(id);
-      state.doc.lines.push({
-        id,
-        layer: targetLayer,
-        x1: fromCanvasUnit(l.x1, th),
-        y1: fromCanvasUnit(l.y1, th),
-        x2: fromCanvasUnit(l.x2, th),
-        y2: fromCanvasUnit(l.y2, th),
-        move: mv,
-        thousandth: th,
-        ...makeDefaultRadialFields((l.x1 + l.x2) * 0.5, (l.y1 + l.y2) * 0.5)
-      });
-    }
-
-    for (const q of res.quads) {
-      const id = BlkParser.nextId('quad');
-      newBatchIds.add(id);
-      state.doc.quads.push({
-        id,
-        layer: targetLayer,
-        tl: { x: fromCanvasUnit(q.tl.x, th), y: fromCanvasUnit(q.tl.y, th) },
-        tr: { x: fromCanvasUnit(q.tr.x, th), y: fromCanvasUnit(q.tr.y, th) },
-        br: { x: fromCanvasUnit(q.br.x, th), y: fromCanvasUnit(q.br.y, th) },
-        bl: { x: fromCanvasUnit(q.bl.x, th), y: fromCanvasUnit(q.bl.y, th) },
-        move: mv,
-        thousandth: th,
-        ...makeDefaultRadialFields(
-          (q.tl.x + q.tr.x + q.br.x + q.bl.x) * 0.25,
-          (q.tl.y + q.tr.y + q.br.y + q.bl.y) * 0.25
-        )
-      });
-    }
-
-    state.lastTraceIds = newBatchIds;
-    $('btnUndoTrace').disabled = false;
-    $('chkTraceLivePreview').checked = false;
-    pushHistory();
-    requestRender();
-    showToast(`Auto-drew ${res.lines.length} lines${res.quads.length ? ` & ${res.quads.length} quads` : ''} into ${targetLayer === 'base' ? 'Base' : 'Drawn'} layer`);
   }
 
   function undoLastAutoTrace() {
@@ -6793,287 +6899,308 @@
   /**
    * Direct SVG vector importer: flattens SVG shapes and compound paths directly using native DOM geometry APIs.
    */
-  function importSvgFile(svgText, fileName = 'artwork.svg') {
-    const parser = new DOMParser();
-    const xml = parser.parseFromString(svgText, 'image/svg+xml');
-    const svgEl = xml.querySelector('svg');
-    if (!svgEl) {
-      showToast('Invalid SVG file', 'error');
-      return;
-    }
-
-    const ns = 'http://www.w3.org/2000/svg';
-    const host = document.createElement('div');
-    host.style.cssText = 'position:fixed;left:-99999px;top:-99999px;width:0;height:0;overflow:hidden;opacity:0;pointer-events:none;';
-    const cloned = document.importNode(svgEl, true);
-    host.appendChild(cloned);
-    document.body.appendChild(host);
-
-    const closedFillGroups = [];
-    const openPolylines = [];
-
+  async function importSvgFile(svgText, fileName = 'artwork.svg') {
+    showTaskProgress(`Importing SVG: ${fileName}`, 'Parsing vector DOM...', 5);
     try {
-      const vb = cloned.viewBox && cloned.viewBox.baseVal && cloned.viewBox.baseVal.width > 0
-        ? cloned.viewBox.baseVal
-        : null;
-      let bbox;
-      try { bbox = cloned.getBBox(); } catch (_) { bbox = null; }
-      const vbX = vb ? vb.x : (bbox && bbox.width > 0 ? bbox.x : 0);
-      const vbY = vb ? vb.y : (bbox && bbox.height > 0 ? bbox.y : 0);
-      const vbW = vb ? vb.width : (parseFloat(cloned.getAttribute('width')) || (bbox && bbox.width > 0 ? bbox.width : 100));
-      const vbH = vb ? vb.height : (parseFloat(cloned.getAttribute('height')) || (bbox && bbox.height > 0 ? bbox.height : 100));
-      const svgAspect = vbW / (vbH || 1);
-
-      const targetH = state.refImage.scale || 0.45;
-      const targetW = targetH * svgAspect;
-      const cx = state.refImage.x || 0;
-      const cy = state.refImage.y || 0;
-      const rotRad = ((state.refImage.rotation || 0) * Math.PI) / 180;
-      const cosR = Math.cos(rotRad), sinR = Math.sin(rotRad);
-      const svgRootCtm = cloned.getCTM();
-      const invRootCtm = svgRootCtm ? svgRootCtm.inverse() : null;
-
-      function svgPtToWorld(sx, sy) {
-        const lx = ((sx - vbX) / (vbW || 1) - 0.5) * targetW;
-        const ly = ((sy - vbY) / (vbH || 1) - 0.5) * targetH;
-        return {
-          x: cx + lx * cosR - ly * sinR,
-          y: cy + lx * sinR + ly * cosR
-        };
+      await nextPaintFrame();
+      const parser = new DOMParser();
+      const xml = parser.parseFromString(svgText, 'image/svg+xml');
+      const svgEl = xml.querySelector('svg');
+      if (!svgEl) {
+        showToast('Invalid SVG file', 'error');
+        return;
       }
 
-      const simpWorldEps = Math.max(0.00018, ((parseFloat($('rngTraceSimplify')?.value) || 0.65) / 640) * Math.max(targetW, targetH));
+      const ns = 'http://www.w3.org/2000/svg';
+      const host = document.createElement('div');
+      host.style.cssText = 'position:fixed;left:-99999px;top:-99999px;width:0;height:0;overflow:hidden;opacity:0;pointer-events:none;';
+      const cloned = document.importNode(svgEl, true);
+      host.appendChild(cloned);
+      document.body.appendChild(host);
 
-      // Split multi-M <path> d strings into single subpaths with absolute start coordinates
-      function splitPathSubpaths(dStr) {
-        const tokens = dStr.match(/[a-zA-Z]|[-+]?(?:\d*\.\d+|\d+\.?)(?:[eE][-+]?\d+)?/g);
-        if (!tokens) return [];
-        const subpaths = [];
-        let curD = '';
-        let x = 0, y = 0, sx0 = 0, sy0 = 0;
-        let cmd = '';
-        let i = 0;
-        const num = () => (i < tokens.length && !/^[a-zA-Z]$/.test(tokens[i]) ? parseFloat(tokens[i++]) : NaN);
+      const closedFillGroups = [];
+      const openPolylines = [];
 
-        while (i < tokens.length) {
-          if (/^[a-zA-Z]$/.test(tokens[i])) {
-            cmd = tokens[i++];
-            if (cmd === 'Z' || cmd === 'z') {
-              curD += ' Z';
-              x = sx0; y = sy0;
-              continue;
+      try {
+        const vb = cloned.viewBox && cloned.viewBox.baseVal && cloned.viewBox.baseVal.width > 0
+          ? cloned.viewBox.baseVal
+          : null;
+        let bbox;
+        try { bbox = cloned.getBBox(); } catch (_) { bbox = null; }
+        const vbX = vb ? vb.x : (bbox && bbox.width > 0 ? bbox.x : 0);
+        const vbY = vb ? vb.y : (bbox && bbox.height > 0 ? bbox.y : 0);
+        const vbW = vb ? vb.width : (parseFloat(cloned.getAttribute('width')) || (bbox && bbox.width > 0 ? bbox.width : 100));
+        const vbH = vb ? vb.height : (parseFloat(cloned.getAttribute('height')) || (bbox && bbox.height > 0 ? bbox.height : 100));
+        const svgAspect = vbW / (vbH || 1);
+
+        const targetH = state.refImage.scale || 0.45;
+        const targetW = targetH * svgAspect;
+        const cx = state.refImage.x || 0;
+        const cy = state.refImage.y || 0;
+        const rotRad = ((state.refImage.rotation || 0) * Math.PI) / 180;
+        const cosR = Math.cos(rotRad), sinR = Math.sin(rotRad);
+        const svgRootCtm = cloned.getCTM();
+        const invRootCtm = svgRootCtm ? svgRootCtm.inverse() : null;
+
+        function svgPtToWorld(sx, sy) {
+          const lx = ((sx - vbX) / (vbW || 1) - 0.5) * targetW;
+          const ly = ((sy - vbY) / (vbH || 1) - 0.5) * targetH;
+          return {
+            x: cx + lx * cosR - ly * sinR,
+            y: cy + lx * sinR + ly * cosR
+          };
+        }
+
+        const simpWorldEps = Math.max(0.00018, ((parseFloat($('rngTraceSimplify')?.value) || 0.65) / 640) * Math.max(targetW, targetH));
+
+        // Split multi-M <path> d strings into single subpaths with absolute start coordinates
+        function splitPathSubpaths(dStr) {
+          const tokens = dStr.match(/[a-zA-Z]|[-+]?(?:\d*\.\d+|\d+\.?)(?:[eE][-+]?\d+)?/g);
+          if (!tokens) return [];
+          const subpaths = [];
+          let curD = '';
+          let x = 0, y = 0, sx0 = 0, sy0 = 0;
+          let cmd = '';
+          let i = 0;
+          const num = () => (i < tokens.length && !/^[a-zA-Z]$/.test(tokens[i]) ? parseFloat(tokens[i++]) : NaN);
+
+          while (i < tokens.length) {
+            if (/^[a-zA-Z]$/.test(tokens[i])) {
+              cmd = tokens[i++];
+              if (cmd === 'Z' || cmd === 'z') {
+                curD += ' Z';
+                x = sx0; y = sy0;
+                continue;
+              }
+            }
+            if (cmd === 'M' || cmd === 'm') {
+              const nx = num(), ny = num();
+              if (Number.isNaN(nx) || Number.isNaN(ny)) break;
+              x = cmd === 'm' ? x + nx : nx;
+              y = cmd === 'm' ? y + ny : ny;
+              sx0 = x; sy0 = y;
+              if (curD.trim()) subpaths.push(curD.trim());
+              curD = `M ${x} ${y}`;
+              cmd = cmd === 'm' ? 'l' : 'L';
+            } else if (cmd === 'L' || cmd === 'l') {
+              const nx = num(), ny = num();
+              if (Number.isNaN(nx) || Number.isNaN(ny)) break;
+              x = cmd === 'l' ? x + nx : nx;
+              y = cmd === 'l' ? y + ny : ny;
+              curD += ` L ${x} ${y}`;
+            } else if (cmd === 'H' || cmd === 'h') {
+              const nx = num();
+              if (Number.isNaN(nx)) break;
+              x = cmd === 'h' ? x + nx : nx;
+              curD += ` L ${x} ${y}`;
+            } else if (cmd === 'V' || cmd === 'v') {
+              const ny = num();
+              if (Number.isNaN(ny)) break;
+              y = cmd === 'v' ? y + ny : ny;
+              curD += ` L ${x} ${y}`;
+            } else if (cmd === 'C' || cmd === 'c') {
+              const a = num(), b = num(), c = num(), d = num(), e = num(), f = num();
+              if ([a, b, c, d, e, f].some(Number.isNaN)) break;
+              const rel = cmd === 'c';
+              curD += ` C ${rel ? x + a : a} ${rel ? y + b : b} ${rel ? x + c : c} ${rel ? y + d : d} ${rel ? x + e : e} ${rel ? y + f : f}`;
+              x = rel ? x + e : e; y = rel ? y + f : f;
+            } else if (cmd === 'S' || cmd === 's' || cmd === 'Q' || cmd === 'q') {
+              const a = num(), b = num(), c = num(), d = num();
+              if ([a, b, c, d].some(Number.isNaN)) break;
+              const rel = cmd === 's' || cmd === 'q';
+              const op = (cmd === 'S' || cmd === 's') ? 'S' : 'Q';
+              curD += ` ${op} ${rel ? x + a : a} ${rel ? y + b : b} ${rel ? x + c : c} ${rel ? y + d : d}`;
+              x = rel ? x + c : c; y = rel ? y + d : d;
+            } else if (cmd === 'T' || cmd === 't') {
+              const a = num(), b = num();
+              if ([a, b].some(Number.isNaN)) break;
+              x = cmd === 't' ? x + a : a; y = cmd === 't' ? y + b : b;
+              curD += ` T ${x} ${y}`;
+            } else if (cmd === 'A' || cmd === 'a') {
+              const rx = num(), ry = num(), rot = num(), la = num(), swp = num(), a = num(), b = num();
+              if ([rx, ry, rot, la, swp, a, b].some(Number.isNaN)) break;
+              const nx = cmd === 'a' ? x + a : a;
+              const ny = cmd === 'a' ? y + b : b;
+              curD += ` A ${rx} ${ry} ${rot} ${la} ${swp} ${nx} ${ny}`;
+              x = nx; y = ny;
+            } else {
+              break;
             }
           }
-          if (cmd === 'M' || cmd === 'm') {
-            const nx = num(), ny = num();
-            if (Number.isNaN(nx) || Number.isNaN(ny)) break;
-            x = cmd === 'm' ? x + nx : nx;
-            y = cmd === 'm' ? y + ny : ny;
-            sx0 = x; sy0 = y;
-            if (curD.trim()) subpaths.push(curD.trim());
-            curD = `M ${x} ${y}`;
-            cmd = cmd === 'm' ? 'l' : 'L';
-          } else if (cmd === 'L' || cmd === 'l') {
-            const nx = num(), ny = num();
-            if (Number.isNaN(nx) || Number.isNaN(ny)) break;
-            x = cmd === 'l' ? x + nx : nx;
-            y = cmd === 'l' ? y + ny : ny;
-            curD += ` L ${x} ${y}`;
-          } else if (cmd === 'H' || cmd === 'h') {
-            const nx = num();
-            if (Number.isNaN(nx)) break;
-            x = cmd === 'h' ? x + nx : nx;
-            curD += ` L ${x} ${y}`;
-          } else if (cmd === 'V' || cmd === 'v') {
-            const ny = num();
-            if (Number.isNaN(ny)) break;
-            y = cmd === 'v' ? y + ny : ny;
-            curD += ` L ${x} ${y}`;
-          } else if (cmd === 'C' || cmd === 'c') {
-            const a = num(), b = num(), c = num(), d = num(), e = num(), f = num();
-            if ([a, b, c, d, e, f].some(Number.isNaN)) break;
-            const rel = cmd === 'c';
-            curD += ` C ${rel ? x + a : a} ${rel ? y + b : b} ${rel ? x + c : c} ${rel ? y + d : d} ${rel ? x + e : e} ${rel ? y + f : f}`;
-            x = rel ? x + e : e; y = rel ? y + f : f;
-          } else if (cmd === 'S' || cmd === 's' || cmd === 'Q' || cmd === 'q') {
-            const a = num(), b = num(), c = num(), d = num();
-            if ([a, b, c, d].some(Number.isNaN)) break;
-            const rel = cmd === 's' || cmd === 'q';
-            const op = (cmd === 'S' || cmd === 's') ? 'S' : 'Q';
-            curD += ` ${op} ${rel ? x + a : a} ${rel ? y + b : b} ${rel ? x + c : c} ${rel ? y + d : d}`;
-            x = rel ? x + c : c; y = rel ? y + d : d;
-          } else if (cmd === 'T' || cmd === 't') {
-            const a = num(), b = num();
-            if ([a, b].some(Number.isNaN)) break;
-            x = cmd === 't' ? x + a : a; y = cmd === 't' ? y + b : b;
-            curD += ` T ${x} ${y}`;
-          } else if (cmd === 'A' || cmd === 'a') {
-            const rx = num(), ry = num(), rot = num(), la = num(), swp = num(), a = num(), b = num();
-            if ([rx, ry, rot, la, swp, a, b].some(Number.isNaN)) break;
-            const nx = cmd === 'a' ? x + a : a;
-            const ny = cmd === 'a' ? y + b : b;
-            curD += ` A ${rx} ${ry} ${rot} ${la} ${swp} ${nx} ${ny}`;
-            x = nx; y = ny;
+          if (curD.trim()) subpaths.push(curD.trim());
+          return subpaths;
+        }
+
+        const shapes = cloned.querySelectorAll('path, circle, ellipse, rect, polygon, polyline, line');
+        const totalShapes = shapes.length;
+        for (let si = 0; si < totalShapes; si++) {
+          if (si > 0 && si % 12 === 0) {
+            updateTaskProgress(`Flattening vector shape ${si + 1} / ${totalShapes}...`, 10 + (si / totalShapes) * 65);
+            await nextPaintFrame();
+          }
+          const el = shapes[si];
+          if (el.closest('defs, clipPath, mask, marker, pattern, symbol')) continue;
+          const cs = window.getComputedStyle(el);
+          if (cs.display === 'none' || cs.visibility === 'hidden') continue;
+
+          const fillVal = (el.getAttribute('fill') || cs.fill || '').trim().toLowerCase();
+          const strokeVal = (el.getAttribute('stroke') || cs.stroke || '').trim().toLowerCase();
+          const hasFill = fillVal !== 'none' && fillVal !== 'transparent';
+          const hasStroke = strokeVal !== '' && strokeVal !== 'none' && strokeVal !== 'transparent';
+
+          const ctm = el.getCTM();
+          const relMtx = ctm && invRootCtm ? invRootCtm.multiply(ctm) : ctm;
+          const transformPt = (p) => relMtx
+            ? { x: p.x * relMtx.a + p.y * relMtx.c + relMtx.e, y: p.x * relMtx.b + p.y * relMtx.d + relMtx.f }
+            : { x: p.x, y: p.y };
+
+          const sampleGeometryEl = (geomEl) => {
+            let totalLen = 0;
+            try { totalLen = geomEl.getTotalLength(); } catch (_) { return; }
+            if (!(totalLen > 0)) return;
+            const samplesCount = Math.max(8, Math.min(480, Math.ceil((totalLen / Math.max(vbW, vbH, 1)) * 420)));
+            const pts = [];
+            for (let s = 0; s <= samplesCount; s++) {
+              const pt = geomEl.getPointAtLength((s / samplesCount) * totalLen);
+              const tp = transformPt(pt);
+              pts.push(svgPtToWorld(tp.x, tp.y));
+            }
+            if (pts.length < 2) return;
+            const isClosed = Math.hypot(pts[0].x - pts[pts.length - 1].x, pts[0].y - pts[pts.length - 1].y) < 1e-4;
+            const { corners } = smoothPolylineTaubin(pts, 0, { closed: isClosed, cornerCos: 0.72 });
+            const simp = piecewiseRdpSimplify(pts, corners, simpWorldEps, isClosed);
+            if (hasFill && !hasStroke && isClosed && simp.length >= 3) {
+              closedFillGroups.push(simp);
+            } else {
+              openPolylines.push({ pts: simp, closed: isClosed });
+            }
+          };
+
+          if (el.tagName.toLowerCase() === 'path') {
+            const dStr = el.getAttribute('d') || '';
+            const subs = splitPathSubpaths(dStr);
+            if (subs.length <= 1) {
+              sampleGeometryEl(el);
+            } else {
+              const fillSubLoops = [];
+              for (const sd of subs) {
+                const tmp = document.createElementNS(ns, 'path');
+                tmp.setAttribute('d', sd);
+                el.parentNode.appendChild(tmp);
+                let totalLen = 0;
+                try { totalLen = tmp.getTotalLength(); } catch (_) { totalLen = 0; }
+                if (totalLen > 0) {
+                  const sc = Math.max(6, Math.min(420, Math.ceil((totalLen / Math.max(vbW, vbH, 1)) * 420)));
+                  const pts = [];
+                  for (let s = 0; s <= sc; s++) {
+                    const tp = transformPt(tmp.getPointAtLength((s / sc) * totalLen));
+                    pts.push(svgPtToWorld(tp.x, tp.y));
+                  }
+                  const isClosed = /z\s*$/i.test(sd) || Math.hypot(pts[0].x - pts[pts.length - 1].x, pts[0].y - pts[pts.length - 1].y) < 1e-4;
+                  const { corners } = smoothPolylineTaubin(pts, 0, { closed: isClosed, cornerCos: 0.72 });
+                  const simp = piecewiseRdpSimplify(pts, corners, simpWorldEps, isClosed);
+                  if (hasFill && !hasStroke && isClosed && simp.length >= 3) {
+                    fillSubLoops.push(simp);
+                  } else if (simp.length >= 2) {
+                    openPolylines.push({ pts: simp, closed: isClosed });
+                  }
+                }
+                tmp.remove();
+              }
+              for (const fl of fillSubLoops) closedFillGroups.push(fl);
+            }
           } else {
-            break;
+            sampleGeometryEl(el);
           }
         }
-        if (curD.trim()) subpaths.push(curD.trim());
-        return subpaths;
+      } finally {
+        host.remove();
       }
 
-      const shapes = cloned.querySelectorAll('path, circle, ellipse, rect, polygon, polyline, line');
-      for (const el of shapes) {
-        if (el.closest('defs, clipPath, mask, marker, pattern, symbol')) continue;
-        const cs = window.getComputedStyle(el);
-        if (cs.display === 'none' || cs.visibility === 'hidden') continue;
+      if (openPolylines.length === 0 && closedFillGroups.length === 0) {
+        showToast(`No vector paths found inside ${fileName}`, 'warn');
+        return;
+      }
 
-        const fillVal = (el.getAttribute('fill') || cs.fill || '').trim().toLowerCase();
-        const strokeVal = (el.getAttribute('stroke') || cs.stroke || '').trim().toLowerCase();
-        const hasFill = fillVal !== 'none' && fillVal !== 'transparent';
-        const hasStroke = strokeVal !== '' && strokeVal !== 'none' && strokeVal !== 'transparent';
+      const targetLayer = $('selTraceLayer')?.value || 'draw';
+      const strokeOutput = $('selTraceOutput')?.value || 'lines';
+      const th = state.options.defaultThousandth;
+      const mv = state.options.defaultMoveRadial ? false : state.options.defaultMove;
+      const batchIds = new Set();
 
-        const ctm = el.getCTM();
-        const relMtx = ctm && invRootCtm ? invRootCtm.multiply(ctm) : ctm;
-        const transformPt = (p) => relMtx
-          ? { x: p.x * relMtx.a + p.y * relMtx.c + relMtx.e, y: p.x * relMtx.b + p.y * relMtx.d + relMtx.f }
-          : { x: p.x, y: p.y };
+      function pushWorldLine(a, b) {
+        if (Math.hypot(b.x - a.x, b.y - a.y) < 1e-6) return;
+        const id = BlkParser.nextId('line');
+        batchIds.add(id);
+        state.doc.lines.push({
+          id,
+          layer: targetLayer,
+          x1: fromCanvasUnit(a.x, th),
+          y1: fromCanvasUnit(a.y, th),
+          x2: fromCanvasUnit(b.x, th),
+          y2: fromCanvasUnit(b.y, th),
+          move: mv,
+          thousandth: th,
+          ...makeDefaultRadialFields((a.x + b.x) * 0.5, (a.y + b.y) * 0.5)
+        });
+      }
 
-        const sampleGeometryEl = (geomEl) => {
-          let totalLen = 0;
-          try { totalLen = geomEl.getTotalLength(); } catch (_) { return; }
-          if (!(totalLen > 0)) return;
-          const samplesCount = Math.max(8, Math.min(480, Math.ceil((totalLen / Math.max(vbW, vbH, 1)) * 420)));
-          const pts = [];
-          for (let s = 0; s <= samplesCount; s++) {
-            const pt = geomEl.getPointAtLength((s / samplesCount) * totalLen);
-            const tp = transformPt(pt);
-            pts.push(svgPtToWorld(tp.x, tp.y));
-          }
-          if (pts.length < 2) return;
-          const isClosed = Math.hypot(pts[0].x - pts[pts.length - 1].x, pts[0].y - pts[pts.length - 1].y) < 1e-4;
-          const { corners } = smoothPolylineTaubin(pts, 0, { closed: isClosed, cornerCos: 0.72 });
-          const simp = piecewiseRdpSimplify(pts, corners, simpWorldEps);
-          if (hasFill && !hasStroke && isClosed && simp.length >= 3) {
-            closedFillGroups.push(simp);
-          } else {
-            openPolylines.push({ pts: simp, closed: isClosed });
-          }
-        };
+      function pushWorldQuad(q) {
+        const id = BlkParser.nextId('quad');
+        batchIds.add(id);
+        state.doc.quads.push({
+          id,
+          layer: targetLayer,
+          tl: { x: fromCanvasUnit(q.tl.x, th), y: fromCanvasUnit(q.tl.y, th) },
+          tr: { x: fromCanvasUnit(q.tr.x, th), y: fromCanvasUnit(q.tr.y, th) },
+          br: { x: fromCanvasUnit(q.br.x, th), y: fromCanvasUnit(q.br.y, th) },
+          bl: { x: fromCanvasUnit(q.bl.x, th), y: fromCanvasUnit(q.bl.y, th) },
+          move: mv,
+          thousandth: th,
+          ...makeDefaultRadialFields(
+            (q.tl.x + q.tr.x + q.br.x + q.bl.x) * 0.25,
+            (q.tl.y + q.tr.y + q.br.y + q.bl.y) * 0.25
+          )
+        });
+      }
 
-        if (el.tagName.toLowerCase() === 'path') {
-          const dStr = el.getAttribute('d') || '';
-          const subs = splitPathSubpaths(dStr);
-          if (subs.length <= 1) {
-            sampleGeometryEl(el);
-          } else {
-            const fillSubLoops = [];
-            for (const sd of subs) {
-              const tmp = document.createElementNS(ns, 'path');
-              tmp.setAttribute('d', sd);
-              el.parentNode.appendChild(tmp);
-              let totalLen = 0;
-              try { totalLen = tmp.getTotalLength(); } catch (_) { totalLen = 0; }
-              if (totalLen > 0) {
-                const sc = Math.max(6, Math.min(420, Math.ceil((totalLen / Math.max(vbW, vbH, 1)) * 420)));
-                const pts = [];
-                for (let s = 0; s <= sc; s++) {
-                  const tp = transformPt(tmp.getPointAtLength((s / sc) * totalLen));
-                  pts.push(svgPtToWorld(tp.x, tp.y));
-                }
-                const isClosed = /z\s*$/i.test(sd) || Math.hypot(pts[0].x - pts[pts.length - 1].x, pts[0].y - pts[pts.length - 1].y) < 1e-4;
-                const { corners } = smoothPolylineTaubin(pts, 0, { closed: isClosed, cornerCos: 0.72 });
-                const simp = piecewiseRdpSimplify(pts, corners, simpWorldEps);
-                if (hasFill && !hasStroke && isClosed && simp.length >= 3) {
-                  fillSubLoops.push(simp);
-                } else if (simp.length >= 2) {
-                  openPolylines.push({ pts: simp, closed: isClosed });
-                }
-              }
-              tmp.remove();
-            }
-            for (const fl of fillSubLoops) closedFillGroups.push(fl);
+      if (closedFillGroups.length > 0) {
+        updateTaskProgress(`Triangulating ${closedFillGroups.length} filled contour(s)...`, 80);
+        await nextPaintFrame();
+        const nested = nestClosedContoursWithHoles(closedFillGroups);
+        for (const item of nested) {
+          const bridged = bridgeHolesIntoOuter(item.pts, item.holes);
+          const quads = triangulatePolygonToQuads(bridged);
+          for (const q of quads) pushWorldQuad({ tl: q[0], tr: q[1], br: q[2], bl: q[3] });
+        }
+      }
+
+      updateTaskProgress('Adding vector primitives to reticle...', 92);
+      await nextPaintFrame();
+
+      for (const poly of openPolylines) {
+        if (strokeOutput === 'quadRibbon' || strokeOutput === 'variableInk') {
+          const halfW = (state.options.brushWidth || 0.004) * 0.5;
+          for (const q of buildMiterRibbonQuads(poly.pts, halfW, { closed: poly.closed })) {
+            pushWorldQuad(q);
           }
         } else {
-          sampleGeometryEl(el);
+          for (let k = 0; k < poly.pts.length - 1; k++) pushWorldLine(poly.pts[k], poly.pts[k + 1]);
+          if (poly.closed && poly.pts.length >= 3) {
+            pushWorldLine(poly.pts[poly.pts.length - 1], poly.pts[0]);
+          }
         }
       }
+
+      updateTaskProgress('Done', 100);
+      state.lastTraceIds = batchIds;
+      $('btnUndoTrace').disabled = batchIds.size === 0;
+      pushHistory();
+      requestRender();
+      showToast(`Imported SVG "${fileName}": ${batchIds.size} shapes into ${targetLayer === 'base' ? 'Base' : 'Drawn'} layer`);
     } finally {
-      host.remove();
+      hideTaskProgress();
     }
-
-    if (openPolylines.length === 0 && closedFillGroups.length === 0) {
-      showToast(`No vector paths found inside ${fileName}`, 'warn');
-      return;
-    }
-
-    const targetLayer = $('selTraceLayer')?.value || 'draw';
-    const strokeOutput = $('selTraceOutput')?.value || 'lines';
-    const th = state.options.defaultThousandth;
-    const mv = state.options.defaultMoveRadial ? false : state.options.defaultMove;
-    const batchIds = new Set();
-
-    function pushWorldLine(a, b) {
-      if (Math.hypot(b.x - a.x, b.y - a.y) < 1e-6) return;
-      const id = BlkParser.nextId('line');
-      batchIds.add(id);
-      state.doc.lines.push({
-        id,
-        layer: targetLayer,
-        x1: fromCanvasUnit(a.x, th),
-        y1: fromCanvasUnit(a.y, th),
-        x2: fromCanvasUnit(b.x, th),
-        y2: fromCanvasUnit(b.y, th),
-        move: mv,
-        thousandth: th,
-        ...makeDefaultRadialFields((a.x + b.x) * 0.5, (a.y + b.y) * 0.5)
-      });
-    }
-
-    function pushWorldQuad(q) {
-      const id = BlkParser.nextId('quad');
-      batchIds.add(id);
-      state.doc.quads.push({
-        id,
-        layer: targetLayer,
-        tl: { x: fromCanvasUnit(q.tl.x, th), y: fromCanvasUnit(q.tl.y, th) },
-        tr: { x: fromCanvasUnit(q.tr.x, th), y: fromCanvasUnit(q.tr.y, th) },
-        br: { x: fromCanvasUnit(q.br.x, th), y: fromCanvasUnit(q.br.y, th) },
-        bl: { x: fromCanvasUnit(q.bl.x, th), y: fromCanvasUnit(q.bl.y, th) },
-        move: mv,
-        thousandth: th,
-        ...makeDefaultRadialFields(
-          (q.tl.x + q.tr.x + q.br.x + q.bl.x) * 0.25,
-          (q.tl.y + q.tr.y + q.br.y + q.bl.y) * 0.25
-        )
-      });
-    }
-
-    if (closedFillGroups.length > 0) {
-      const nested = nestClosedContoursWithHoles(closedFillGroups);
-      for (const item of nested) {
-        const bridged = bridgeHolesIntoOuter(item.pts, item.holes);
-        const quads = triangulatePolygonToQuads(bridged);
-        for (const q of quads) pushWorldQuad({ tl: q[0], tr: q[1], br: q[2], bl: q[3] });
-      }
-    }
-
-    for (const poly of openPolylines) {
-      if (strokeOutput === 'quadRibbon' || strokeOutput === 'variableInk') {
-        const halfW = (state.options.brushWidth || 0.004) * 0.5;
-        for (const q of buildMiterRibbonQuads(poly.pts, halfW, { closed: poly.closed })) {
-          pushWorldQuad(q);
-        }
-      } else {
-        for (let k = 0; k < poly.pts.length - 1; k++) pushWorldLine(poly.pts[k], poly.pts[k + 1]);
-      }
-    }
-
-    state.lastTraceIds = batchIds;
-    $('btnUndoTrace').disabled = batchIds.size === 0;
-    pushHistory();
-    requestRender();
-    showToast(`Imported SVG "${fileName}": ${batchIds.size} shapes into ${targetLayer === 'base' ? 'Base' : 'Drawn'} layer`);
   }
 
   /**
@@ -7328,7 +7455,12 @@
   // =========================================================================
   // File Loading & Saving
   // =========================================================================
-  function loadBlkDocument(blkText, name, asOverlay = false) {
+  async function loadBlkDocument(blkText, name, asOverlay = false) {
+    const isLarge = typeof blkText === 'string' && blkText.length > 80000;
+    if (isLarge) {
+      showTaskProgress('Parsing .blk Sight...', name, null);
+      await nextPaintFrame();
+    }
     try {
       const parsed = BlkParser.parse(blkText, {
         defaultLayer: 'base',
@@ -7399,14 +7531,26 @@
     } catch (err) {
       console.error(err);
       showToast(`Failed to parse ${name}: ${err.message}`, 'error');
+    } finally {
+      if (isLarge) hideTaskProgress();
     }
   }
 
   function loadReferenceImageFile(file) {
+    showTaskProgress('Loading Reference Image...', file.name, null);
     const reader = new FileReader();
+    reader.onerror = () => {
+      hideTaskProgress();
+      showToast(`Failed to read ${file.name}`, 'error');
+    };
     reader.onload = () => {
       const img = new Image();
+      img.onerror = () => {
+        hideTaskProgress();
+        showToast(`Failed to decode image: ${file.name}`, 'error');
+      };
       img.onload = () => {
+        hideTaskProgress();
         state.refImage.img = img;
         state.refImage.name = file.name;
         state.refImage.visible = true;
@@ -8357,8 +8501,19 @@
     $('chkOptQuads').addEventListener('change', () => {
       if (state.optimizerBaseline) runGlobalOptimize(true, true);
     });
-    $('btnOptimizeAll').addEventListener('click', () => {
-      runGlobalOptimize(true, true);
+    $('btnOptimizeAll').addEventListener('click', async () => {
+      const count = state.doc.lines.length + state.doc.quads.length;
+      if (count > 400) {
+        showTaskProgress('Optimizing Sight...', `Simplifying ${count} primitives...`, null);
+        try {
+          await nextPaintFrame();
+          runGlobalOptimize(true, true);
+        } finally {
+          hideTaskProgress();
+        }
+      } else {
+        runGlobalOptimize(true, true);
+      }
     });
     $('btnUndoOptimize').addEventListener('click', () => {
       if (!state.optimizerBaseline) return;
