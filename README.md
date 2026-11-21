@@ -1,4 +1,6 @@
-[![Image preview](https://cdn-live.warthunder.com/uploads/da/29/96/3aed6ab6e288b345016bcbbf3c558a93f6_mq/WhatsApp+Image+2026-11-21+at+23.00.38.jpg)](https://live.warthunder.com/post/1196320/en/)
+[![Image preview](https://cdn-live.warthunder.com/uploads/da/29/96/3aed6ab6e288b345016bcbbf3c558a93f6_mq/WhatsApp+Image+2026-11-21+at+23.00.38.jpg "Drawing by @2079qeqeYour")](https://live.warthunder.com/post/1196320/en/)
+
+`(Original drawing by @2079qeqeYour)`
 
 # WT Reticle Studio Pro: War Thunder `.blk` Custom Sight & Art Editor
 
