@@ -162,10 +162,15 @@ Because the editor runs 100% client-side in HTML5/CSS/JS, you can host the folde
   - **Freehand (`B`)**:
     - **`Brush Output`**: `Optimized Lines (drawLines)`, `Thick Ribbon (drawQuads)`, or `Filled Closed Shape (drawQuads)`.
     - **`Smoothing`**: Ramer-Douglas-Peucker simplification tolerance (`0.0001` to `0.01`, default `0.0012`).
-    - **`Thickness`** *(when `Thick Ribbon` is selected)*: World width of generated quad strips (`0.001` to `0.03`, default `0.0040`).
-  - **Spline (`S`)**:
-    - **`Curve Output`**: `Smooth Lines (drawLines)` or `Thick Ribbon (drawQuads)` (shows `Thickness` slider).
-    - **`Smoothness`**: Number of subdivided segments per control-point span (`4` to `32`, default `12`).
+    - **`Stabilizer`**: Lazy-mouse stroke stabilization (`0%` to `90%`, default `35%`) with a live cyan tension guide to smooth hand jitter while drawing.
+    - **`Thickness`** *(when `Thick Ribbon` is selected)*: World width of generated miter-joined quad strips (`0.001` to `0.03`, default `0.0040`).
+    - **`Taper Ends`** *(when `Thick Ribbon` is selected)*: Smoothly tapers ribbon thickness at stroke start and end using arc-length weighting.
+  - **Polyline (`P`) / Spline (`S`) / Polygon (`Q`)**:
+    - Click consecutive points (`Shift` snaps 15° angles on Polyline/Spline); press **`Backspace`** or **Right-Click** to undo the last placed point.
+    - Click the **orange starting point** on **`Spline (S)`** or **`Polygon (Q)`** (with 3+ points) to snap shut into a seamless closed Catmull-Rom loop or filled polygon (`drawQuads`).
+    - **Spline (`S`) Options**:
+      - **`Curve Output`**: `Smooth Lines (drawLines)` or `Thick Ribbon (drawQuads)` (shows `Thickness` slider).
+      - **`Smoothness`**: Number of subdivided segments per control-point span (`4` to `32`, default `12`).
   - **Rect (`R`) / Circle (`C`) / Shape (`G`)**:
     - **`Output Type`**: `Outline (drawLines)`, `Filled (drawQuads)`, or `Native WT Circle (drawCircles)` (enabled when Circle tool is active).
     - **`Circle Segs`** *(Circle outline/filled)*: Polygon segment count around a full 360-degree circle (`6` to `128`, default `36`).
@@ -221,24 +226,26 @@ Full visual editor for War Thunder `UserSights/tank_sight_presets/*.blk` HUD pre
   - **`Rotation`**: Exact angle in degrees (`-180°` to `+180°`).
   - **`Reset Pos`**: Resets position to `(0, 0)`, rotation to `0°`, and size to `0.45`.
   - **`Fit Sight`**: Resets position/rotation and scales the image to `0.90` world height (filling most of the `16:9` viewport height).
+  - **`Import .svg`**: Parses an `.svg` vector file directly through browser geometry primitives (`getTotalLength` / `getCTM` + subpath splitting & hole-preserving polygon triangulation) into clean lines or merged quads without rasterization.
 - **Auto-Draw Vectorizer Box** *(displays detected `Lines / Quads` badge on the right)*:
   - **`Mode`**:
-    - **`Smart Line Art (Single-Stroke Centerline)`** *(Default)*: Ideal for line art, anime/mascot drawings, and emblems. Uses a chroma-aware luminance blend (detecting colored accents like cheek blush as well as black ink), a Background-Only 2D Integral Image (`>= Otsu threshold`), and a Chamfer Distance Transform + separable max filter so thin strokes vectorize cleanly as single-stroke centerlines while thick solid fills (such as dark eyes) trace strictly along their **exact outer border** without inward indentation.
-    - **`Crisp Contours (Sub-Pixel Outlines)`**: Uses sub-pixel linear-interpolated Marching Squares to outline every solid dark region and hole boundary.
-    - **`Illustration / Photo Edges (Canny)`**: Applies Sobel gradient magnitude, non-maximum suppression, and dual-threshold hysteresis edge tracking for photos or shaded illustrations.
-    - **`Hybrid Art (Lines + Filled Quads)`**: Traces crisp line art (`drawLines`) and fills dark interior spans (`drawQuads`) automatically.
+    - **`Smart Line Art (Pure Centerline)`** *(Default)*: Topology-aware centerline vectorizer built for line art, emblems, and anime/mascot art. Uses a chroma-aware luminance blend, a Background-Only 2D Integral Image (`>= Otsu threshold`), 1px-padded Zhang-Suen thinning, junction spur pruning, **Junction Super-Node clustering**, tangent-aligned X-crossing/T-crossbar branch merging, multi-pixel chord corner detection with non-shrinking Taubin smoothing, and sub-pixel darkness-ridge centering — eliminating hollow crossing bow-ties, disconnected junction gaps, half-pixel shifts, and staircase artifacts.
+    - **`Line Art + Solid Fills (Smart Hybrid)`**: Uses an exact 2D Felzenszwalb-Huttenlocher Euclidean Distance Transform (EDT) circular morphological opening to separate thick filled areas (eyes, shadows, silhouettes) from strokes/crossings, extracting hole-preserved solid polygons (`drawQuads`) merged into minimal convex quads alongside clean centerline strokes (`drawLines`).
+    - **`Crisp Contours (Sub-Pixel Outlines)`**: Uses sub-pixel linear-interpolated Marching Squares with hole nesting, Taubin smoothing, and optional Solid Fill / Outline export.
+    - **`Illustration / Photo Edges (Canny)`**: Applies Sobel gradient magnitude, non-maximum suppression, dual-threshold hysteresis, spur pruning, and topology graph chaining for photos or shaded illustrations.
   - **`Sensitivity`** (`5%` to `99%`, default `72%`): Higher values capture lighter pencil lines, subtle shading, and colored details; lower values keep only bold high-contrast strokes.
   - **`Contrast Boost`** (`1.0x` to `4.0x`, default `1.6x`): Stretches tonal separation around the image mean before thresholding.
-  - **`Resolution`** (`256px` to `1024px`, default `640px`): Longest-edge sampling grid resolution; higher captures finer details at slightly higher segment counts.
-  - **`Curve Smoothing`** (`0.20px` to `3.50px`, default `0.65px`): Sub-pixel Ramer-Douglas-Peucker tolerance; lower values hug subtle curves, higher values reduce total segment count.
-  - **`De-Speckle`** (`1px` to `16px`, default `3px`): Minimum pixel chain length required before a traced path is kept (filters out noise/dust).
-  - **`Stroke Type`**: Exports traced paths as **`Standard Lines (drawLines)`** or **`Thick Filled Ribbon (drawQuads)`** (using the active brush thickness).
-  - **`Live Preview`**: Shows a real-time cyan vector preview overlay on top of your reference image whenever you move a slider or reposition the image.
-  - **`Replace Last`**: When checked, clicking `Auto-Draw Image → Reticle` again replaces the previously traced batch rather than stacking duplicates.
-  - **`Invert B/W`**: Inverts luminance calculation (enable this when tracing **white/bright lines on a dark background**).
-  - **`Target Layer Dropdown`**: Routes traced geometry to **`→ Drawn Layer`** or **`→ Base Layer`**.
-  - **`Auto-Draw Image → Reticle`**: Commits the vectorized lines/quads into your sight and pushes an Undo step.
-  - **`↩ Undo`**: One-click removal of the most recently committed Auto-Draw trace batch.
+  - **`Resolution`** (`256px` to `1280px`, default `640px`): Longest-edge sampling grid resolution (automatically applied at full scale inside the cropped region when **Crop Trace Area** is active).
+  - **`Curve Smoothing`** (`0.20px` to `3.50px`, default `0.65px`): Corner-preserving piecewise Ramer-Douglas-Peucker tolerance; lower values hug subtle curves, higher values reduce total segment count while keeping sharp vertices intact.
+  - **`De-Speckle`** (`1px` to `16px`, default `3px`): Minimum pixel chain length required before a traced path is kept.
+  - **`Spur Trim`** (`0px` to `12px`, default `3px`): Prunes short whisker/twig spurs at line junctions without removing legitimate lines.
+  - **`Solid Size` & `Solid Areas`** *(shown in Smart Hybrid / Crisp Contours modes)*: Adjusts the minimum half-thickness radius (`2.0px–16.0px`, default `3.5px`) used to separate thick solid fills, and switches between **`Solid Fill (Merged Quads)`** (with hole bridging) or **`Crisp Outlines Only`**.
+  - **`Stroke Type`**: Exports traced paths as **`Standard Lines (drawLines)`**, **`Uniform Ribbon (drawQuads)`** (miter-joined strips with bevels on hairpin turns), or **`Variable-Width Ink (drawQuads)`** (dynamic stroke thickness sampled per vertex from exact EDT radii).
+  - **`Preview`**: Switches live overlay rendering between **`Cyan Vector Overlay`**, **`High-Contrast Vectors`** (dark halo under cyan/gold vectors), and **`Ink Mask + Vectors`** (live magenta thin-ink + amber solid-fill mask overlay).
+  - **`Layer` Dropdown**: Routes traced geometry to **`→ Drawn Layer`** or **`→ Base Layer`**.
+  - **`Crop Trace Area` & `Reset Crop`**: Toggles an interactive amber ROI box on canvas so Auto-Draw isolates and upscales just a specific region of the reference image.
+  - **`Live Preview`**, **`Replace Last`**, **`Invert B/W`**, and **`Bridge Gaps`** *(closes tiny 1–3.5px hairline breaks between opposing endpoints)*.
+  - **`Auto-Draw Image → Reticle`** & **`↩ Undo`**: Commits the vectorized lines/quads into your sight with one-click Undo.
 
 ---
 
@@ -291,7 +298,9 @@ The editor manages two layers so you can modify or draw over existing sights saf
 - **Convert & Simplify Selection**:
   - **`Detail Kept` Slider (`5%–99%`) + `Simplify Selected` + `↩ Undo`**: Runs the polyline chainer and RDP simplifier exclusively on the currently selected unlocked lines, with live scrubbing and dedicated one-click Undo.
   - **`Select Chain`**: Expands a selected line to all connected line segments forming the same stroke or loop (same as double-clicking a line).
-  - **`Lines → Quads`**: Converts selected thin `drawLines` segments into filled `drawQuads` strips using the active brush thickness.
+  - **`Smooth Curves`**: Applies corner-preserving Taubin curve smoothing to selected connected line chains (removes angular zig-zags while keeping sharp vertices crisp).
+  - **`Weld Gaps`**: Snaps nearby loose open endpoints on selected lines cleanly together.
+  - **`Lines → Quads`**: Converts selected connected `drawLines` chains into continuous miter-joined filled `drawQuads` strips (with automatic beveling at sharp corners) using the active brush thickness.
   - **`Quads → Lines`**: Extracts the 4 outer edges of selected `drawQuads` into wireframe `drawLines`.
 - **Single-Element Numeric Inspector** *(shown when exactly 1 shape is selected)*:
   - Allows direct numeric editing of **`Line`** (`X1, Y1, X2, Y2`), **`Quad`** (`TL/TR/BR/BL X & Y`), **`Circle`** (`Center X/Y, Diameter, Thickness, Start Deg, End Deg`), or **`Text`** (`Text string, X, Y, Size`).
@@ -349,7 +358,8 @@ Maps directly to War Thunder's top-level `.blk` header properties and blocks:
 | **`Ctrl + D`** | Duplicate selected shapes (onto Drawn layer) |
 | **`Ctrl + A`** | Select all visible, unlocked shapes |
 | **`Ctrl + S`** | Save / Download `.blk` file |
-| **`Delete` / `Backspace`** | Delete selected unlocked shapes |
+| **`Backspace` / `Right-Click`** *(while drawing `P`/`S`/`Q`)* | Remove the last placed vertex without canceling the entire stroke |
+| **`Delete` / `Backspace`** *(idle)* | Delete selected unlocked shapes |
 
 ---
 
@@ -362,12 +372,12 @@ Maps directly to War Thunder's top-level `.blk` header properties and blocks:
 3. Draw using the left toolbar (`L`, `S`, `B`, `Q`, `G`, `T`) or use **Pro Auto-Draw** to trace a reference image onto the **Drawn Layer**.
 4. Keep **`Include Base in Export`** checked if you want both combined, or uncheck it to export *only* your custom Drawn overlay, then click **`Save .blk`**.
 
-### Workflow 2: Converting an Image / Drawing Automatically with Auto-Draw
-1. Click **`Ref Image`** in the top bar (or drag-and-drop a `PNG`/`JPG`/`WebP`/`SVG` onto the canvas).
-2. In **Panel 4 (Ref Image & Pro Auto-Draw)**, check **`Move / Resize Image Directly on Canvas`** and position the image inside the **16:9 viewport** where you want it to appear in-game. Uncheck when positioned.
-3. Choose **`Smart Line Art`** for clean line drawings/characters (or **`Hybrid Art`** if you also want dark regions filled with quads, or **`Crisp Contours`** for solid logos).
-4. Adjust **`Sensitivity`**, **`Contrast Boost`**, and **`Curve Smoothing`** while watching the real-time cyan preview overlay. *(If your image uses bright lines on a dark background, enable **`Invert B/W`**).*
-5. Click **`Auto-Draw Image → Reticle`**. If total primitives get high, use **Sight Optimizer & Complexity** (`Detail Kept` + **`Optimize Sight`**) to reduce segment count smoothly without losing silhouette accuracy.
+### Workflow 2: Converting an Image or SVG Automatically with Auto-Draw
+1. Click **`Ref Image`** in the top bar (or drag-and-drop a `PNG`/`JPG`/`WebP`/`SVG` onto the canvas), or click **`Import .svg`** inside Panel 4 to import raw SVG vector paths directly without rasterization.
+2. In **Panel 4 (Ref Image & Pro Auto-Draw)**, check **`Move / Resize Image Directly on Canvas`** and position the image inside the **16:9 viewport** (optionally enable **`Crop Trace Area`** to isolate one part of the image).
+3. Choose **`Smart Line Art (Pure Centerline)`** for clean crossing-free single strokes, **`Line Art + Solid Fills (Smart Hybrid)`** for solid eye/shadow fills (`drawQuads`) + strokes (`drawLines`), or **`Crisp Contours`** for sub-pixel silhouettes.
+4. Adjust **`Sensitivity`**, **`Spur Trim`**, and **`Curve Smoothing`** while watching the live preview (try **`Ink Mask + Vectors`** to inspect exact pixel detection). *(Enable **`Invert B/W`** for bright lines on a dark background, or **`Variable-Width Ink`** for calligraphic weight modulation).*
+5. Click **`Auto-Draw Image → Reticle`**, then refine individual chains with **Smooth Curves**, **Weld Gaps**, or **Optimize Sight**.
 
 ### Workflow 3: Building or Editing a Tank Sight HUD Preset (`tank_sight_presets`)
 1. Open an existing preset from `UserSights/tank_sight_presets/` via **`Open .blk`** (or choose a quick template in **Panel 3: Tank Sight Preset (HUD)** and click **`+ Apply`**).

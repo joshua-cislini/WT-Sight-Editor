@@ -59,6 +59,8 @@
       brushMode: 'lines', // 'lines' | 'quadRibbon' | 'closedFill'
       simplifyTol: 0.0012,
       brushWidth: 0.004,
+      brushStabilizer: 0.35,
+      brushTaper: false,
       splineMode: 'lines', // 'lines' | 'quadRibbon'
       splineSegs: 12,
       shapeMode: 'lines', // 'lines' | 'quads' | 'nativeCircle'
@@ -83,9 +85,19 @@
       rotation: 0
     },
 
+    traceCrop: {
+      active: false,
+      editing: false,
+      x0: 0,
+      y0: 0,
+      x1: 1,
+      y1: 1
+    },
+
     tracePreview: {
       lines: [],
       quads: [],
+      maskCanvas: null,
       dirty: false,
       timer: null
     },
@@ -692,19 +704,26 @@
   }
 
   /**
-   * Catmull-Rom Spline interpolation through control points.
+   * Catmull-Rom Spline interpolation through control points (open or closed loop).
    */
-  function evaluateCatmullRomSpline(ctrlPts, segsPerSpan = 12) {
-    if (ctrlPts.length < 2) return ctrlPts.slice();
-    if (ctrlPts.length === 2) return ctrlPts.slice();
+  function evaluateCatmullRomSpline(ctrlPts, segsPerSpan = 12, closed = false) {
+    const clean = [];
+    for (const p of ctrlPts) {
+      if (!clean.length || Math.hypot(p.x - clean[clean.length - 1].x, p.y - clean[clean.length - 1].y) > 1e-7) {
+        clean.push(p);
+      }
+    }
+    if (clean.length < 2) return clean;
+    if (clean.length === 2) return closed ? [clean[0], clean[1], clean[0]] : clean.slice();
     const out = [];
-    const n = ctrlPts.length;
+    const n = clean.length;
+    const spanCount = closed ? n : n - 1;
 
-    for (let i = 0; i < n - 1; i++) {
-      const p0 = ctrlPts[Math.max(0, i - 1)];
-      const p1 = ctrlPts[i];
-      const p2 = ctrlPts[i + 1];
-      const p3 = ctrlPts[Math.min(n - 1, i + 2)];
+    for (let i = 0; i < spanCount; i++) {
+      const p0 = closed ? clean[(i - 1 + n) % n] : clean[Math.max(0, i - 1)];
+      const p1 = clean[i];
+      const p2 = closed ? clean[(i + 1) % n] : clean[i + 1];
+      const p3 = closed ? clean[(i + 2) % n] : clean[Math.min(n - 1, i + 2)];
 
       for (let s = 0; s < segsPerSpan; s++) {
         const t = s / segsPerSpan;
@@ -725,22 +744,37 @@
         out.push({ x, y });
       }
     }
-    out.push(ctrlPts[n - 1]);
+    out.push(closed ? { x: clean[0].x, y: clean[0].y } : { x: clean[n - 1].x, y: clean[n - 1].y });
     return out;
+  }
+
+  function polySignedArea(pts) {
+    let area = 0;
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[i];
+      const b = pts[(i + 1) % pts.length];
+      area += a.x * b.y - b.x * a.y;
+    }
+    return area * 0.5;
   }
 
   function triangulatePolygon(pts) {
     if (pts.length < 3) return [];
     if (pts.length === 3) return [[pts[0], pts[1], pts[2]]];
 
-    const poly = pts.map((p) => ({ x: p.x, y: p.y }));
-    let area = 0;
-    for (let i = 0; i < poly.length; i++) {
-      const a = poly[i];
-      const b = poly[(i + 1) % poly.length];
-      area += a.x * b.y - b.x * a.y;
+    const poly = [];
+    for (const p of pts) {
+      if (!poly.length || Math.hypot(p.x - poly[poly.length - 1].x, p.y - poly[poly.length - 1].y) > 1e-8) {
+        poly.push({ x: p.x, y: p.y });
+      }
     }
-    if (area < 0) poly.reverse();
+    if (poly.length > 3 && Math.hypot(poly[0].x - poly[poly.length - 1].x, poly[0].y - poly[poly.length - 1].y) <= 1e-8) {
+      poly.pop();
+    }
+    if (poly.length < 3) return [];
+    if (poly.length === 3) return [[poly[0], poly[1], poly[2]]];
+
+    if (polySignedArea(poly) < 0) poly.reverse();
 
     function cross(a, b, c) {
       return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
@@ -755,7 +789,8 @@
 
     const tris = [];
     let guard = 0;
-    while (poly.length > 3 && guard++ < 600) {
+    const maxGuard = Math.max(800, poly.length * 4);
+    while (poly.length > 3 && guard++ < maxGuard) {
       let earFound = false;
       for (let i = 0; i < poly.length; i++) {
         const prev = poly[(i - 1 + poly.length) % poly.length];
@@ -784,6 +819,520 @@
       tris.push([poly[0], poly[1], poly[2]]);
     }
     return tris;
+  }
+
+  /**
+   * Splice CW hole loops into a CCW outer loop using mutually-visible bridge edges.
+   */
+  function bridgeHolesIntoOuter(outerPts, holeLists) {
+    if (!outerPts || outerPts.length < 3) return [];
+    let outer = outerPts.map((p) => ({ x: p.x, y: p.y }));
+    if (polySignedArea(outer) < 0) outer.reverse();
+    if (!holeLists || !holeLists.length) return outer;
+
+    const preparedHoles = holeLists
+      .filter((h) => h && h.length >= 3)
+      .map((h) => {
+        const copy = h.map((p) => ({ x: p.x, y: p.y }));
+        if (polySignedArea(copy) > 0) copy.reverse(); // CW hole inside CCW outer
+        let maxIdx = 0;
+        for (let i = 1; i < copy.length; i++) {
+          if (copy[i].x > copy[maxIdx].x) maxIdx = i;
+        }
+        return { pts: copy, maxIdx, maxX: copy[maxIdx].x };
+      })
+      .sort((a, b) => b.maxX - a.maxX);
+
+    function ptInTriSigned(p, a, b, c) {
+      const c1 = (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
+      const c2 = (c.x - b.x) * (p.y - b.y) - (c.y - b.y) * (p.x - b.x);
+      const c3 = (a.x - c.x) * (p.y - c.y) - (a.y - c.y) * (p.x - c.x);
+      return (c1 >= -1e-9 && c2 >= -1e-9 && c3 >= -1e-9) || (c1 <= 1e-9 && c2 <= 1e-9 && c3 <= 1e-9);
+    }
+
+    for (const h of preparedHoles) {
+      const M = h.pts[h.maxIdx];
+      let bestIx = Infinity;
+      let bestA = -1;
+      let bestB = -1;
+      const n = outer.length;
+
+      for (let i = 0; i < n; i++) {
+        const a = outer[i];
+        const b = outer[(i + 1) % n];
+        if ((a.y <= M.y && b.y > M.y) || (b.y <= M.y && a.y > M.y)) {
+          const t = (M.y - a.y) / (b.y - a.y);
+          const ix = a.x + t * (b.x - a.x);
+          if (ix >= M.x - 1e-7 && ix < bestIx) {
+            bestIx = ix;
+            bestA = i;
+            bestB = (i + 1) % n;
+          }
+        }
+      }
+
+      if (bestA < 0) continue;
+
+      let pIdx = outer[bestA].x >= outer[bestB].x ? bestA : bestB;
+      const I = { x: bestIx, y: M.y };
+      const P = outer[pIdx];
+      let bestReflex = -1;
+      let bestDot = -Infinity;
+
+      for (let i = 0; i < n; i++) {
+        const R = outer[i];
+        if (R.x < M.x - 1e-7) continue;
+        if (i === bestA || i === bestB) continue;
+        const prev = outer[(i - 1 + n) % n];
+        const next = outer[(i + 1) % n];
+        const turn = (R.x - prev.x) * (next.y - R.y) - (R.y - prev.y) * (next.x - R.x);
+        if (turn > 1e-9) continue; // only check reflex vertices inside triangle (M, I, P)
+        if (!ptInTriSigned(R, M, I, P)) continue;
+        const dx = R.x - M.x, dy = R.y - M.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist < 1e-8) continue;
+        const cosA = dx / dist;
+        if (cosA > bestDot + 1e-7) {
+          bestDot = cosA;
+          bestReflex = i;
+        }
+      }
+      if (bestReflex >= 0) pIdx = bestReflex;
+
+      const rotHole = [];
+      for (let k = 0; k < h.pts.length; k++) {
+        rotHole.push({ x: h.pts[(h.maxIdx + k) % h.pts.length].x, y: h.pts[(h.maxIdx + k) % h.pts.length].y });
+      }
+      rotHole.push({ x: M.x, y: M.y });
+      rotHole.push({ x: outer[pIdx].x, y: outer[pIdx].y });
+
+      outer.splice(pIdx + 1, 0, ...rotHole);
+    }
+
+    return outer;
+  }
+
+  /**
+   * Ear-clip triangulate a polygon and greedily merge adjacent triangle pairs into strictly convex quads.
+   * Returns 4-point quad tuples [v0, v1, v2, v3] (triangles become [a, b, c, c]).
+   */
+  function triangulatePolygonToQuads(pts) {
+    const tris = triangulatePolygon(pts);
+    if (!tris.length) return [];
+
+    // Quantize vertices to reliably match shared triangle edges after bridge splicing
+    const ptMap = new Map();
+    const verts = [];
+    function vId(p) {
+      const key = `${Math.round(p.x * 1e6)},${Math.round(p.y * 1e6)}`;
+      let id = ptMap.get(key);
+      if (id === undefined) {
+        id = verts.length;
+        verts.push({ x: p.x, y: p.y });
+        ptMap.set(key, id);
+      }
+      return id;
+    }
+
+    const triIds = tris.map((t) => [vId(t[0]), vId(t[1]), vId(t[2])]);
+    const edgeToTris = new Map();
+    for (let ti = 0; ti < triIds.length; ti++) {
+      const t = triIds[ti];
+      for (let e = 0; e < 3; e++) {
+        const u = t[e];
+        const v = t[(e + 1) % 3];
+        if (u === v) continue;
+        const eKey = u < v ? `${u}_${v}` : `${v}_${u}`;
+        let list = edgeToTris.get(eKey);
+        if (!list) {
+          list = [];
+          edgeToTris.set(eKey, list);
+        }
+        list.push({ ti, u, v, opp: t[(e + 2) % 3] });
+      }
+    }
+
+    function isConvexQuadIds(q0, q1, q2, q3) {
+      const ps = [verts[q0], verts[q1], verts[q2], verts[q3]];
+      let pos = 0, neg = 0;
+      for (let i = 0; i < 4; i++) {
+        const a = ps[i], b = ps[(i + 1) % 4], c = ps[(i + 2) % 4];
+        const cr = (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x);
+        if (cr > 1e-10) pos++;
+        else if (cr < -1e-10) neg++;
+        else return false;
+      }
+      return pos === 4 || neg === 4;
+    }
+
+    const merged = new Uint8Array(triIds.length);
+    const outQuads = [];
+
+    for (const pair of edgeToTris.values()) {
+      if (pair.length !== 2) continue;
+      const e1 = pair[0], e2 = pair[1];
+      if (merged[e1.ti] || merged[e2.ti]) continue;
+      if (e1.opp === e2.opp) continue;
+      // Order around shared diagonal (e1.u, e1.v): [e1.u, e2.opp, e1.v, e1.opp] or [e1.u, e1.opp, e1.v, e2.opp]
+      if (isConvexQuadIds(e1.u, e2.opp, e1.v, e1.opp)) {
+        outQuads.push([verts[e1.u], verts[e2.opp], verts[e1.v], verts[e1.opp]]);
+        merged[e1.ti] = 1;
+        merged[e2.ti] = 1;
+      } else if (isConvexQuadIds(e1.u, e1.opp, e1.v, e2.opp)) {
+        outQuads.push([verts[e1.u], verts[e1.opp], verts[e1.v], verts[e2.opp]]);
+        merged[e1.ti] = 1;
+        merged[e2.ti] = 1;
+      }
+    }
+
+    for (let ti = 0; ti < triIds.length; ti++) {
+      if (!merged[ti]) {
+        const t = triIds[ti];
+        outQuads.push([verts[t[0]], verts[t[1]], verts[t[2]], verts[t[2]]]);
+      }
+    }
+    return outQuads;
+  }
+
+  /**
+   * Exact 2D Euclidean Distance Transform (Felzenszwalb-Huttenlocher O(w*h) squared parabola envelope).
+   * Returns Float32Array of Euclidean distance in pixels from each foreground pixel (bin[i]=1) to nearest background (0).
+   */
+  function computeExactEDT(bin, w, h) {
+    const N = w * h;
+    const INF = 1e9;
+    const sqBuf = new Float32Array(N);
+    const maxDim = Math.max(w, h) + 1;
+    const f = new Float32Array(maxDim);
+    const v = new Int32Array(maxDim);
+    const z = new Float32Array(maxDim + 1);
+    const dOut = new Float32Array(maxDim);
+
+    function edt1d(len) {
+      let k = 0;
+      v[0] = 0;
+      z[0] = -1e18;
+      z[1] = 1e18;
+      for (let q = 1; q < len; q++) {
+        let vk = v[k];
+        let s = ((f[q] + q * q) - (f[vk] + vk * vk)) / (2 * q - 2 * vk);
+        while (k > 0 && s <= z[k]) {
+          k--;
+          vk = v[k];
+          s = ((f[q] + q * q) - (f[vk] + vk * vk)) / (2 * q - 2 * vk);
+        }
+        k++;
+        v[k] = q;
+        z[k] = s;
+        z[k + 1] = 1e18;
+      }
+      k = 0;
+      for (let q = 0; q < len; q++) {
+        while (z[k + 1] < q) k++;
+        const diff = q - v[k];
+        dOut[q] = diff * diff + f[v[k]];
+      }
+    }
+
+    for (let x = 0; x < w; x++) {
+      for (let y = 0; y < h; y++) f[y] = bin[y * w + x] ? INF : 0;
+      edt1d(h);
+      for (let y = 0; y < h; y++) sqBuf[y * w + x] = dOut[y];
+    }
+
+    const edt = new Float32Array(N);
+    for (let y = 0; y < h; y++) {
+      const row = y * w;
+      for (let x = 0; x < w; x++) f[x] = sqBuf[row + x];
+      edt1d(w);
+      for (let x = 0; x < w; x++) {
+        edt[row + x] = bin[row + x] ? Math.sqrt(Math.max(0, dOut[x])) : 0;
+      }
+    }
+    return edt;
+  }
+
+  /**
+   * Corner-preserving non-shrinking Taubin smoothing (lambda / mu passes).
+   * Uses multi-pixel chord angle detection so 45-degree pixel staircases are NOT mistaken for sharp corners.
+   */
+  function smoothPolylineTaubin(chain, passes = 4, options = {}) {
+    const closed = !!options.closed;
+    let src = chain;
+    if (closed && chain.length >= 4 && Math.hypot(chain[0].x - chain[chain.length - 1].x, chain[0].y - chain[chain.length - 1].y) < 1e-4) {
+      src = chain.slice(0, -1);
+    }
+    const n = src.length;
+    if (n < 3) return { pts: src.map((p) => ({ ...p })), corners: new Set([0, Math.max(0, n - 1)]) };
+
+    const cornerCos = options.cornerCos ?? 0.52; // ~58 deg bend over multi-pixel chord
+    const look = Math.max(2, Math.min(5, Math.floor(n / 4)));
+    const rawCorners = new Set();
+
+    if (!closed) {
+      rawCorners.add(0);
+      rawCorners.add(n - 1);
+    }
+
+    if (n >= 5) {
+      const cosArr = new Float64Array(n).fill(1);
+      for (let i = 0; i < n; i++) {
+        if (!closed && (i < look || i >= n - look)) continue;
+        const pPrev = src[(i - look + n) % n];
+        const pCurr = src[i];
+        const pNext = src[(i + look) % n];
+        const v1x = pCurr.x - pPrev.x, v1y = pCurr.y - pPrev.y;
+        const v2x = pNext.x - pCurr.x, v2y = pNext.y - pCurr.y;
+        const l1 = Math.hypot(v1x, v1y), l2 = Math.hypot(v2x, v2y);
+        if (l1 > 1e-6 && l2 > 1e-6) {
+          cosArr[i] = (v1x * v2x + v1y * v2y) / (l1 * l2);
+        }
+      }
+      // Non-maximum sharpness selection so only true corner apexes pin
+      const nmsRad = Math.max(1, Math.floor(look * 0.6));
+      for (let i = 0; i < n; i++) {
+        if (cosArr[i] >= cornerCos) continue;
+        let isBest = true;
+        for (let k = -nmsRad; k <= nmsRad; k++) {
+          if (k === 0) continue;
+          const j = closed ? (i + k + n) % n : i + k;
+          if (j >= 0 && j < n && cosArr[j] < cosArr[i]) {
+            isBest = false;
+            break;
+          }
+        }
+        if (isBest) rawCorners.add(i);
+      }
+    }
+
+    if (options.pinnedIndices) {
+      for (const idx of options.pinnedIndices) {
+        if (idx >= 0 && idx < n) rawCorners.add(idx);
+      }
+    }
+
+    let cur = src.map((p) => ({ ...p }));
+    const lambda = 0.5;
+    const mu = -0.53;
+
+    function taubinStep(weight) {
+      const next = cur.map((p) => ({ ...p }));
+      for (let i = 0; i < n; i++) {
+        if (rawCorners.has(i)) continue;
+        const prevIdx = closed ? (i - 1 + n) % n : i - 1;
+        const nextIdx = closed ? (i + 1) % n : i + 1;
+        if (prevIdx < 0 || nextIdx >= n) continue;
+        const mx = 0.5 * (cur[prevIdx].x + cur[nextIdx].x);
+        const my = 0.5 * (cur[prevIdx].y + cur[nextIdx].y);
+        next[i].x = cur[i].x + weight * (mx - cur[i].x);
+        next[i].y = cur[i].y + weight * (my - cur[i].y);
+      }
+      cur = next;
+    }
+
+    for (let pass = 0; pass < passes; pass++) {
+      taubinStep(lambda);
+      taubinStep(mu);
+    }
+
+    return { pts: cur, corners: rawCorners };
+  }
+
+  /**
+   * Run Douglas-Peucker simplification piecewise between pinned corner indices so crisp corners are preserved.
+   */
+  function piecewiseRdpSimplify(pts, cornersSet, epsilon, closed = false) {
+    if (pts.length <= 2 || epsilon <= 0) return pts.slice();
+    if (closed && pts.length >= 3) {
+      const loopPts = pts.concat([pts[0]]);
+      const sorted = Array.from(cornersSet || [])
+        .filter((idx) => idx >= 0 && idx < pts.length)
+        .sort((a, b) => a - b);
+      if (sorted.length < 2) {
+        const half = Math.max(1, Math.floor(pts.length / 2));
+        sorted.length = 0;
+        sorted.push(0, half, pts.length);
+      } else {
+        if (sorted[0] !== 0) sorted.unshift(0);
+        sorted.push(pts.length);
+      }
+      const out = [];
+      for (let k = 0; k < sorted.length - 1; k++) {
+        const a = sorted[k], b = sorted[k + 1];
+        if (b <= a) continue;
+        const seg = rdpSimplify(loopPts.slice(a, b + 1), epsilon);
+        if (out.length > 0) seg.shift();
+        for (const pt of seg) out.push(pt);
+      }
+      if (out.length > 3 && Math.hypot(out[0].x - out[out.length - 1].x, out[0].y - out[out.length - 1].y) < 1e-6) {
+        out.pop();
+      }
+      return out.length >= 3 ? out : pts.slice();
+    }
+
+    const sorted = Array.from(cornersSet || [])
+      .filter((idx) => idx >= 0 && idx < pts.length)
+      .sort((a, b) => a - b);
+    if (!sorted.length || sorted[0] !== 0) sorted.unshift(0);
+    if (sorted[sorted.length - 1] !== pts.length - 1) sorted.push(pts.length - 1);
+
+    const out = [];
+    for (let k = 0; k < sorted.length - 1; k++) {
+      const a = sorted[k];
+      const b = sorted[k + 1];
+      if (b <= a) continue;
+      const seg = rdpSimplify(pts.slice(a, b + 1), epsilon);
+      if (out.length > 0) seg.shift();
+      for (const pt of seg) out.push(pt);
+    }
+    return out.length >= 2 ? out : pts.slice();
+  }
+
+  /**
+   * Snap smoothed interior chain points onto the exact sub-pixel ink darkness ridge using quadratic peak fitting.
+   */
+  function snapChainToDarkRidge(pts, lumField, w, h, cornersSet, closed = false) {
+    const n = pts.length;
+    if (n < 3 || !lumField) return pts;
+    const step = 0.72;
+
+    function sampleField(fx, fy) {
+      const cx = Math.max(0, Math.min(w - 1.001, fx - 0.5));
+      const cy = Math.max(0, Math.min(h - 1.001, fy - 0.5));
+      const x0 = Math.floor(cx), y0 = Math.floor(cy);
+      const x1 = Math.min(w - 1, x0 + 1), y1 = Math.min(h - 1, y0 + 1);
+      const tx = cx - x0, ty = cy - y0;
+      const v00 = lumField[y0 * w + x0];
+      const v10 = lumField[y0 * w + x1];
+      const v01 = lumField[y1 * w + x0];
+      const v11 = lumField[y1 * w + x1];
+      return (v00 * (1 - tx) + v10 * tx) * (1 - ty) + (v01 * (1 - tx) + v11 * tx) * ty;
+    }
+
+    return pts.map((p, i) => {
+      if (cornersSet && cornersSet.has(i)) return p;
+      if (!closed && (i === 0 || i === n - 1)) return p;
+      // Do not shift pixels belonging to wide solid fills
+      if (p.halfWidthPx !== undefined && p.halfWidthPx > 2.2) return p;
+
+      const pPrev = pts[(i - 1 + n) % n];
+      const pNext = pts[(i + 1) % n];
+      const tx = pNext.x - pPrev.x;
+      const ty = pNext.y - pPrev.y;
+      const tLen = Math.hypot(tx, ty);
+      if (tLen < 1e-4) return p;
+      const nx = -ty / tLen;
+      const ny = tx / tLen;
+
+      const a = sampleField(p.x - nx * step, p.y - ny * step);
+      const b = sampleField(p.x, p.y);
+      const c = sampleField(p.x + nx * step, p.y + ny * step);
+      const denom = a - 2 * b + c;
+      if (denom >= -0.02) return p; // not a distinct dark ridge
+      const delta = Math.max(-0.85, Math.min(0.85, (a - c) / (2 * denom)));
+      return { ...p, x: p.x + nx * delta * step, y: p.y + ny * delta * step };
+    });
+  }
+
+  /**
+   * Build clean miter-joined quads (with automatic beveling at acute bends and optional variable half-widths).
+   */
+  function buildMiterRibbonQuads(worldPts, halfWidths, options = {}) {
+    if (!worldPts || worldPts.length < 2) return [];
+    const pts = [];
+    for (const p of worldPts) {
+      if (!pts.length || Math.hypot(p.x - pts[pts.length - 1].x, p.y - pts[pts.length - 1].y) > 1e-7) {
+        pts.push(p);
+      }
+    }
+    const closed = !!options.closed && pts.length >= 3;
+    if (closed && Math.hypot(pts[0].x - pts[pts.length - 1].x, pts[0].y - pts[pts.length - 1].y) <= 1e-7) {
+      pts.pop();
+    }
+    const n = pts.length;
+    if (n < 2) return [];
+
+    const miterLimit = options.miterLimit ?? 2.3;
+    function getHw(i) {
+      return Array.isArray(halfWidths) ? (halfWidths[i] ?? halfWidths[0] ?? 0.002) : (halfWidths || 0.002);
+    }
+
+    const segCount = closed ? n : n - 1;
+    const segNorms = [];
+    for (let i = 0; i < segCount; i++) {
+      const a = pts[i];
+      const b = pts[(i + 1) % n];
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const len = Math.hypot(dx, dy) || 1;
+      segNorms.push({ nx: -dy / len, ny: dx / len, dx: dx / len, dy: dy / len });
+    }
+
+    const endCaps = [];
+    for (let i = 0; i < n; i++) {
+      const hw = getHw(i);
+      const hasPrev = closed || i > 0;
+      const hasNext = closed || i < n - 1;
+      const n1 = hasPrev ? segNorms[(i - 1 + segCount) % segCount] : segNorms[0];
+      const n2 = hasNext ? segNorms[i % segCount] : segNorms[segCount - 1];
+
+      if (!hasPrev || !hasNext) {
+        const refN = hasNext ? n2 : n1;
+        const L = { x: pts[i].x + refN.nx * hw, y: pts[i].y + refN.ny * hw };
+        const R = { x: pts[i].x - refN.nx * hw, y: pts[i].y - refN.ny * hw };
+        endCaps.push({ inL: L, inR: R, outL: L, outR: R, bevel: null });
+        continue;
+      }
+
+      const bx = n1.nx + n2.nx, by = n1.ny + n2.ny;
+      const bl = Math.hypot(bx, by);
+      if (bl < 1e-5) {
+        const L1 = { x: pts[i].x + n1.nx * hw, y: pts[i].y + n1.ny * hw };
+        const R1 = { x: pts[i].x - n1.nx * hw, y: pts[i].y - n1.ny * hw };
+        const L2 = { x: pts[i].x + n2.nx * hw, y: pts[i].y + n2.ny * hw };
+        const R2 = { x: pts[i].x - n2.nx * hw, y: pts[i].y - n2.ny * hw };
+        endCaps.push({ inL: L1, inR: R1, outL: L2, outR: R2, bevel: { tl: L1, tr: L2, br: R2, bl: R1 } });
+        continue;
+      }
+
+      const bnx = bx / bl, bny = by / bl;
+      const dot = bnx * n1.nx + bny * n1.ny;
+      const miterRatio = 1 / Math.max(0.08, dot);
+
+      if (miterRatio <= miterLimit) {
+        const m = hw * miterRatio;
+        const L = { x: pts[i].x + bnx * m, y: pts[i].y + bny * m };
+        const R = { x: pts[i].x - bnx * m, y: pts[i].y - bny * m };
+        endCaps.push({ inL: L, inR: R, outL: L, outR: R, bevel: null });
+      } else {
+        // Bevel outer corner and clamp inner miter to prevent spikes
+        const crossTurn = n1.dx * n2.dy - n1.dy * n2.dx;
+        const clampM = hw * Math.min(1.35, 1 / Math.max(0.45, dot));
+        if (crossTurn >= 0) {
+          // Turning left -> Right side is outer, Left side is inner
+          const inL = { x: pts[i].x + bnx * clampM, y: pts[i].y + bny * clampM };
+          const r1 = { x: pts[i].x - n1.nx * hw, y: pts[i].y - n1.ny * hw };
+          const r2 = { x: pts[i].x - n2.nx * hw, y: pts[i].y - n2.ny * hw };
+          endCaps.push({ inL, inR: r1, outL: inL, outR: r2, bevel: { tl: r1, tr: r2, br: inL, bl: inL } });
+        } else {
+          // Turning right -> Left side is outer, Right side is inner
+          const inR = { x: pts[i].x - bnx * clampM, y: pts[i].y - bny * clampM };
+          const l1 = { x: pts[i].x + n1.nx * hw, y: pts[i].y + n1.ny * hw };
+          const l2 = { x: pts[i].x + n2.nx * hw, y: pts[i].y + n2.ny * hw };
+          endCaps.push({ inL: l1, inR, outL: l2, outR: inR, bevel: { tl: l1, tr: l2, br: inR, bl: inR } });
+        }
+      }
+    }
+
+    const quads = [];
+    for (let i = 0; i < segCount; i++) {
+      const a = endCaps[i];
+      const b = endCaps[(i + 1) % n];
+      quads.push({ tl: a.outL, tr: b.inL, br: b.inR, bl: a.outR });
+      if (b.bevel && (closed || i + 1 < n - 1)) {
+        quads.push(b.bevel);
+      }
+    }
+    return quads;
   }
 
   // =========================================================================
@@ -896,7 +1445,7 @@
     }
   }
 
-  function addPolylineSymmetric(pts, mode = 'lines', width = 0.004, layer = 'draw') {
+  function addPolylineSymmetric(pts, mode = 'lines', width = 0.004, layer = 'draw', options = {}) {
     if (pts.length < 2) return;
     if (mode === 'closedFill') {
       if (pts.length >= 3) addPolygonSymmetric(pts, layer);
@@ -907,48 +1456,36 @@
         if (Math.hypot(pts[i + 1].x - pts[i].x, pts[i + 1].y - pts[i].y) < 1e-6) continue;
         addLineSymmetric(pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y, layer);
       }
+      if (options.closed && pts.length >= 3 && Math.hypot(pts[0].x - pts[pts.length - 1].x, pts[0].y - pts[pts.length - 1].y) >= 1e-6) {
+        addLineSymmetric(pts[pts.length - 1].x, pts[pts.length - 1].y, pts[0].x, pts[0].y, layer);
+      }
       return;
     }
 
-    const halfW = width / 2;
-    const leftPts = [];
-    const rightPts = [];
-
-    for (let i = 0; i < pts.length; i++) {
-      let nx = 0, ny = 0;
-      if (i === 0) {
-        const dx = pts[1].x - pts[0].x;
-        const dy = pts[1].y - pts[0].y;
-        const len = Math.hypot(dx, dy) || 1;
-        nx = -dy / len; ny = dx / len;
-      } else if (i === pts.length - 1) {
-        const dx = pts[i].x - pts[i - 1].x;
-        const dy = pts[i].y - pts[i - 1].y;
-        const len = Math.hypot(dx, dy) || 1;
-        nx = -dy / len; ny = dx / len;
-      } else {
-        const dx1 = pts[i].x - pts[i - 1].x, dy1 = pts[i].y - pts[i - 1].y;
-        const l1 = Math.hypot(dx1, dy1) || 1;
-        const dx2 = pts[i + 1].x - pts[i].x, dy2 = pts[i + 1].y - pts[i].y;
-        const l2 = Math.hypot(dx2, dy2) || 1;
-        const n1x = -dy1 / l1, n1y = dx1 / l1;
-        const n2x = -dy2 / l2, n2y = dx2 / l2;
-        nx = n1x + n2x; ny = n1y + n2y;
-        const nl = Math.hypot(nx, ny);
-        if (nl < 1e-5) {
-          nx = n1x; ny = n1y;
-        } else {
-          nx /= nl; ny /= nl;
-          const dot = Math.max(0.45, nx * n1x + ny * n1y);
-          nx /= dot; ny /= dot;
-        }
+    const baseHalfW = width / 2;
+    let halfWidths = baseHalfW;
+    if (options.taper && pts.length >= 4 && !options.closed) {
+      // Smooth arc-length cosine taper at both ends
+      const cumLen = [0];
+      let total = 0;
+      for (let i = 1; i < pts.length; i++) {
+        total += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+        cumLen.push(total);
       }
-      leftPts.push({ x: pts[i].x + nx * halfW, y: pts[i].y + ny * halfW });
-      rightPts.push({ x: pts[i].x - nx * halfW, y: pts[i].y - ny * halfW });
+      const taperDist = Math.min(total * 0.28, Math.max(width * 3.5, 0.018));
+      halfWidths = pts.map((_, i) => {
+        if (total < 1e-6) return baseHalfW;
+        const dStart = cumLen[i];
+        const dEnd = total - cumLen[i];
+        const d = Math.min(dStart, dEnd);
+        const factor = d >= taperDist ? 1 : 0.16 + 0.84 * Math.sin((Math.PI * 0.5 * d) / Math.max(1e-6, taperDist));
+        return baseHalfW * factor;
+      });
     }
 
-    for (let i = 0; i < pts.length - 1; i++) {
-      addQuadSymmetric(leftPts[i], leftPts[i + 1], rightPts[i + 1], rightPts[i], layer);
+    const quads = buildMiterRibbonQuads(pts, halfWidths, { closed: !!options.closed });
+    for (const q of quads) {
+      addQuadSymmetric(q.tl, q.tr, q.br, q.bl, layer);
     }
   }
 
@@ -962,9 +1499,9 @@
       addQuadSymmetric(pts[0], pts[1], pts[2], pts[3], layer);
       return;
     }
-    const tris = triangulatePolygon(pts);
-    for (const tri of tris) {
-      addQuadSymmetric(tri[0], tri[1], tri[2], tri[2], layer);
+    const quads = triangulatePolygonToQuads(pts);
+    for (const q of quads) {
+      addQuadSymmetric(q[0], q[1], q[2], q[3], layer);
     }
   }
 
@@ -1168,6 +1705,62 @@
       if (Math.hypot(lx - c.x, ly - c.y) <= 10) return { type: 'ref-scale' };
     }
     if (Math.abs(lx) <= wPx / 2 && Math.abs(ly) <= hPx / 2) return { type: 'ref-move' };
+    return null;
+  }
+
+  function refNormToWorld(u, v) {
+    const r = state.refImage;
+    if (!r.img) return { x: 0, y: 0 };
+    const aspect = r.img.width / (r.img.height || 1);
+    const worldH = r.scale;
+    const worldW = worldH * aspect;
+    const lx = (u - 0.5) * worldW;
+    const ly = (v - 0.5) * worldH;
+    const rad = (r.rotation * Math.PI) / 180;
+    const cos = Math.cos(rad), sin = Math.sin(rad);
+    return { x: r.x + lx * cos - ly * sin, y: r.y + lx * sin + ly * cos };
+  }
+
+  function worldToRefNorm(wx, wy) {
+    const r = state.refImage;
+    if (!r.img) return { u: 0.5, v: 0.5 };
+    const aspect = r.img.width / (r.img.height || 1);
+    const worldH = r.scale;
+    const worldW = worldH * aspect;
+    const dx = wx - r.x, dy = wy - r.y;
+    const rad = (-r.rotation * Math.PI) / 180;
+    const cos = Math.cos(rad), sin = Math.sin(rad);
+    const lx = dx * cos - dy * sin;
+    const ly = dx * sin + dy * cos;
+    return { u: lx / (worldW || 1) + 0.5, v: ly / (worldH || 1) + 0.5 };
+  }
+
+  function getTraceCropHandleAtScreen(sx, sy) {
+    const r = state.refImage;
+    const crop = state.traceCrop;
+    if (!r.img || !r.visible || !crop.editing) return null;
+
+    const corners = [
+      { key: 'nw', u: crop.x0, v: crop.y0 },
+      { key: 'ne', u: crop.x1, v: crop.y0 },
+      { key: 'se', u: crop.x1, v: crop.y1 },
+      { key: 'sw', u: crop.x0, v: crop.y1 }
+    ];
+    for (const c of corners) {
+      const sp = worldToScreen(refNormToWorld(c.u, c.v).x, refNormToWorld(c.u, c.v).y);
+      if (Math.hypot(sx - sp.x, sy - sp.y) <= 11) {
+        return { type: 'trace-crop-corner', key: c.key };
+      }
+    }
+
+    const w = screenToWorld(sx, sy);
+    const { u, v } = worldToRefNorm(w.x, w.y);
+    if (crop.active && u >= crop.x0 && u <= crop.x1 && v >= crop.y0 && v <= crop.y1) {
+      return { type: 'trace-crop-move', startU: u, startV: v };
+    }
+    if (u >= -0.05 && u <= 1.05 && v >= -0.05 && v <= 1.05) {
+      return { type: 'trace-crop-draw', startU: Math.max(0, Math.min(1, u)), startV: Math.max(0, Math.min(1, v)) };
+    }
     return null;
   }
 
@@ -1728,6 +2321,81 @@
     showToast(`Selected ${visited.size} connected line segments`);
   }
 
+  function extractConnectedLineChains(linesList) {
+    const groups = new Map();
+    for (const l of linesList) {
+      const gKey = `${l.layer}|${l.move ? 1 : 0}|${l.moveRadial ? 1 : 0}|${l.thousandth ? 1 : 0}`;
+      if (!groups.has(gKey)) groups.set(gKey, []);
+      groups.get(gKey).push(l);
+    }
+
+    const results = [];
+    for (const groupLines of groups.values()) {
+      const eps = 1e-4;
+      const ptMap = new Map();
+      const verts = [];
+      function vIdx(x, y) {
+        const key = `${Math.round(x / eps)}_${Math.round(y / eps)}`;
+        let idx = ptMap.get(key);
+        if (idx === undefined) {
+          idx = verts.length;
+          verts.push({ x, y, edges: [] });
+          ptMap.set(key, idx);
+        }
+        return idx;
+      }
+
+      const edges = groupLines.map((l, ei) => {
+        const u = vIdx(l.x1, l.y1);
+        const v = vIdx(l.x2, l.y2);
+        verts[u].edges.push(ei);
+        verts[v].edges.push(ei);
+        return { l, u, v, used: false };
+      });
+
+      function walkFrom(startV, startEdge) {
+        const pts = [{ x: verts[startV].x, y: verts[startV].y }];
+        const lineIds = [];
+        let curV = startV;
+        let curE = startEdge;
+        while (curE >= 0 && !edges[curE].used) {
+          edges[curE].used = true;
+          lineIds.push(edges[curE].l.id);
+          const nextV = edges[curE].u === curV ? edges[curE].v : edges[curE].u;
+          pts.push({ x: verts[nextV].x, y: verts[nextV].y });
+          curV = nextV;
+          if (verts[curV].edges.length !== 2) break;
+          const nxt = verts[curV].edges.find((ei) => !edges[ei].used);
+          if (nxt === undefined) break;
+          curE = nxt;
+        }
+        return { pts, lineIds };
+      }
+
+      // First walk from non-degree-2 vertices (endpoints & junctions)
+      for (let vi = 0; vi < verts.length; vi++) {
+        if (verts[vi].edges.length === 2) continue;
+        for (const ei of verts[vi].edges) {
+          if (edges[ei].used) continue;
+          const walked = walkFrom(vi, ei);
+          if (walked.pts.length >= 2) {
+            results.push({ pts: walked.pts, lineIds: walked.lineIds, closed: false, template: edges[ei].l });
+          }
+        }
+      }
+      // Then closed degree-2 cycles
+      for (let ei = 0; ei < edges.length; ei++) {
+        if (edges[ei].used) continue;
+        const walked = walkFrom(edges[ei].u, ei);
+        const pts = walked.pts;
+        const closed = pts.length >= 4 && Math.hypot(pts[0].x - pts[pts.length - 1].x, pts[0].y - pts[pts.length - 1].y) <= eps * 2;
+        if (closed) pts.pop();
+        if (pts.length >= 2) results.push({ pts, lineIds: walked.lineIds, closed, template: edges[ei].l });
+      }
+    }
+    return results;
+  }
+
   function convertSelectedLinesToQuads() {
     const selLines = state.doc.lines.filter((l) => state.selection.has(l.id) && !isLayerLocked(l.layer));
     if (selLines.length === 0) {
@@ -1738,26 +2406,28 @@
     const removeIds = new Set(selLines.map((l) => l.id));
     const newIds = new Set();
 
-    for (const l of selLines) {
-      const th = !!l.thousandth;
+    const chains = extractConnectedLineChains(selLines);
+    for (const ch of chains) {
+      const tpl = ch.template;
+      const th = !!tpl.thousandth;
       const w = fromCanvasUnit(halfW, th);
-      const dx = l.x2 - l.x1, dy = l.y2 - l.y1;
-      const len = Math.hypot(dx, dy) || 1;
-      const nx = (-dy / len) * w, ny = (dx / len) * w;
-      const q = {
-        ...cloneItemArrayProps(l),
-        id: BlkParser.nextId('quad'),
-        layer: l.layer,
-        tl: { x: l.x1 + nx, y: l.y1 + ny },
-        tr: { x: l.x2 + nx, y: l.y2 + ny },
-        br: { x: l.x2 - nx, y: l.y2 - ny },
-        bl: { x: l.x1 - nx, y: l.y1 - ny },
-        move: l.move,
-        thousandth: l.thousandth
-      };
-      delete q.x1; delete q.y1; delete q.x2; delete q.y2;
-      state.doc.quads.push(q);
-      newIds.add(q.id);
+      const ribbonQuads = buildMiterRibbonQuads(ch.pts, w, { closed: ch.closed });
+      for (const rq of ribbonQuads) {
+        const q = {
+          ...cloneItemArrayProps(tpl),
+          id: BlkParser.nextId('quad'),
+          layer: tpl.layer,
+          tl: rq.tl,
+          tr: rq.tr,
+          br: rq.br,
+          bl: rq.bl,
+          move: tpl.move,
+          thousandth: tpl.thousandth
+        };
+        delete q.x1; delete q.y1; delete q.x2; delete q.y2;
+        state.doc.quads.push(q);
+        newIds.add(q.id);
+      }
     }
 
     state.doc.lines = state.doc.lines.filter((l) => !removeIds.has(l.id));
@@ -1766,7 +2436,7 @@
     pushHistory();
     updateSelectionUI();
     requestRender();
-    showToast(`Converted ${selLines.length} line(s) to filled quads`);
+    showToast(`Converted ${selLines.length} line(s) into ${newIds.size} miter-joined quads`);
   }
 
   function convertSelectedQuadsToLines() {
@@ -1805,6 +2475,160 @@
     updateSelectionUI();
     requestRender();
     showToast(`Converted ${selQuads.length} quad(s) to wireframe lines`);
+  }
+
+  function smoothSelectedLines() {
+    const selLines = state.doc.lines.filter((l) => state.selection.has(l.id) && !isLayerLocked(l.layer));
+    if (selLines.length < 2) {
+      showToast('Select 2 or more connected lines to smooth curves', 'warn');
+      return;
+    }
+
+    const chains = extractConnectedLineChains(selLines);
+    const removeIds = new Set();
+    const newIds = new Set();
+    let smoothedCount = 0;
+
+    // Identify chains we can genuinely smooth (len >= 4 pts)
+    for (const ch of chains) {
+      if (ch.pts.length < 4) continue;
+      smoothedCount++;
+      for (const lid of ch.lineIds) removeIds.add(lid);
+      const tpl = ch.template;
+      const th = !!tpl.thousandth;
+      const milScale = getActiveMilUnitScale();
+
+      // Work in canvas-uniform units for accurate chord angle corner detection
+      const cPts = ch.pts.map((p) => ({ x: toCanvasUnit(p.x, th, milScale), y: toCanvasUnit(p.y, th, milScale) }));
+      const { pts: sm, corners } = smoothPolylineTaubin(cPts, 3, { closed: ch.closed, cornerCos: 0.52 });
+      const refined = piecewiseRdpSimplify(sm, corners, 0.00018, ch.closed);
+
+      for (let i = 0; i < refined.length - 1; i++) {
+        const a = refined[i], b = refined[i + 1];
+        if (Math.hypot(b.x - a.x, b.y - a.y) < 1e-6) continue;
+        const ln = {
+          ...cloneItemArrayProps(tpl),
+          id: BlkParser.nextId('line'),
+          layer: tpl.layer,
+          x1: fromCanvasUnit(a.x, th, milScale),
+          y1: fromCanvasUnit(a.y, th, milScale),
+          x2: fromCanvasUnit(b.x, th, milScale),
+          y2: fromCanvasUnit(b.y, th, milScale),
+          move: tpl.move,
+          thousandth: tpl.thousandth
+        };
+        state.doc.lines.push(ln);
+        newIds.add(ln.id);
+      }
+      if (ch.closed && refined.length >= 3) {
+        const a = refined[refined.length - 1], b = refined[0];
+        if (Math.hypot(b.x - a.x, b.y - a.y) >= 1e-6) {
+          const ln = {
+            ...cloneItemArrayProps(tpl),
+            id: BlkParser.nextId('line'),
+            layer: tpl.layer,
+            x1: fromCanvasUnit(a.x, th, milScale),
+            y1: fromCanvasUnit(a.y, th, milScale),
+            x2: fromCanvasUnit(b.x, th, milScale),
+            y2: fromCanvasUnit(b.y, th, milScale),
+            move: tpl.move,
+            thousandth: tpl.thousandth
+          };
+          state.doc.lines.push(ln);
+          newIds.add(ln.id);
+        }
+      }
+    }
+
+    if (smoothedCount === 0) {
+      showToast('Select connected chains of 3+ segments to smooth', 'warn');
+      return;
+    }
+
+    state.doc.lines = state.doc.lines.filter((l) => !removeIds.has(l.id));
+    for (const id of removeIds) state.selection.delete(id);
+    for (const id of newIds) state.selection.add(id);
+    pushHistory();
+    updateSelectionUI();
+    requestRender();
+    showToast(`Smoothed ${smoothedCount} curve chain(s) while preserving sharp corners`);
+  }
+
+  function weldSelectedLineGaps() {
+    const selLines = state.doc.lines.filter((l) => state.selection.has(l.id) && !isLayerLocked(l.layer));
+    if (selLines.length < 2) {
+      showToast('Select 2 or more lines to weld gaps', 'warn');
+      return;
+    }
+
+    const milScale = getActiveMilUnitScale();
+    const keyCount = new Map();
+    const eps = 1e-4;
+    function endKey(l, which) {
+      const th = !!l.thousandth;
+      const cx = toCanvasUnit(which === 1 ? l.x1 : l.x2, th, milScale);
+      const cy = toCanvasUnit(which === 1 ? l.y1 : l.y2, th, milScale);
+      return `${l.layer}|${Math.round(cx / eps)}_${Math.round(cy / eps)}`;
+    }
+
+    for (const l of selLines) {
+      const k1 = endKey(l, 1), k2 = endKey(l, 2);
+      keyCount.set(k1, (keyCount.get(k1) || 0) + 1);
+      keyCount.set(k2, (keyCount.get(k2) || 0) + 1);
+    }
+
+    // Only weld genuine degree-1 loose endpoints
+    const loose = [];
+    for (const l of selLines) {
+      const th = !!l.thousandth;
+      if (keyCount.get(endKey(l, 1)) === 1) {
+        loose.push({ line: l, end: 1, x: toCanvasUnit(l.x1, th, milScale), y: toCanvasUnit(l.y1, th, milScale), used: false });
+      }
+      if (keyCount.get(endKey(l, 2)) === 1) {
+        loose.push({ line: l, end: 2, x: toCanvasUnit(l.x2, th, milScale), y: toCanvasUnit(l.y2, th, milScale), used: false });
+      }
+    }
+
+    const maxWeldCanvas = Math.max(0.004, Math.min(0.035, 16 / state.cam.scale));
+    let welded = 0;
+
+    for (let i = 0; i < loose.length; i++) {
+      if (loose[i].used) continue;
+      let bestJ = -1;
+      let bestD = maxWeldCanvas;
+      for (let j = i + 1; j < loose.length; j++) {
+        if (loose[j].used || loose[i].line === loose[j].line) continue;
+        if (loose[i].line.layer !== loose[j].line.layer) continue;
+        const d = Math.hypot(loose[j].x - loose[i].x, loose[j].y - loose[i].y);
+        if (d > 1e-6 && d <= bestD) {
+          bestD = d;
+          bestJ = j;
+        }
+      }
+      if (bestJ >= 0) {
+        const a = loose[i], b = loose[bestJ];
+        a.used = true;
+        b.used = true;
+        const mx = (a.x + b.x) * 0.5;
+        const my = (a.y + b.y) * 0.5;
+        const thA = !!a.line.thousandth, thB = !!b.line.thousandth;
+        const nxA = fromCanvasUnit(mx, thA, milScale), nyA = fromCanvasUnit(my, thA, milScale);
+        const nxB = fromCanvasUnit(mx, thB, milScale), nyB = fromCanvasUnit(my, thB, milScale);
+        if (a.end === 1) { a.line.x1 = nxA; a.line.y1 = nyA; } else { a.line.x2 = nxA; a.line.y2 = nyA; }
+        if (b.end === 1) { b.line.x1 = nxB; b.line.y1 = nyB; } else { b.line.x2 = nxB; b.line.y2 = nyB; }
+        welded++;
+      }
+    }
+
+    if (welded === 0) {
+      showToast('No loose endpoint gaps found within weld tolerance', 'warn');
+      return;
+    }
+
+    pushHistory();
+    updateSelectionUI();
+    requestRender();
+    showToast(`Welded ${welded} endpoint gap(s)`);
   }
 
   function distToSegmentSq(px, py, x1, y1, x2, y2) {
@@ -2183,6 +3007,25 @@
       ctx.translate(center.x, center.y);
       ctx.rotate((r.rotation * Math.PI) / 180);
       ctx.drawImage(r.img, -targetW / 2, -targetH / 2, targetW, targetH);
+
+      const previewStyle = $('selTracePreviewStyle')?.value || 'cyan';
+      if ($('chkTraceLivePreview').checked && previewStyle === 'mask' && state.tracePreview.maskCanvas) {
+        const crop = state.traceCrop;
+        const cx0 = crop.active ? crop.x0 : 0;
+        const cy0 = crop.active ? crop.y0 : 0;
+        const cx1 = crop.active ? crop.x1 : 1;
+        const cy1 = crop.active ? crop.y1 : 1;
+        ctx.globalAlpha = 0.88;
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(
+          state.tracePreview.maskCanvas,
+          -targetW / 2 + cx0 * targetW,
+          -targetH / 2 + cy0 * targetH,
+          (cx1 - cx0) * targetW,
+          (cy1 - cy0) * targetH
+        );
+        ctx.imageSmoothingEnabled = true;
+      }
       ctx.restore();
 
       if (r.editOnCanvas) {
@@ -2208,11 +3051,43 @@
         ctx.restore();
       }
 
+      // Crop Trace ROI Box Overlay
+      if (state.traceCrop.active || state.traceCrop.editing) {
+        const crop = state.traceCrop;
+        const corners = [
+          worldToScreen(refNormToWorld(crop.x0, crop.y0).x, refNormToWorld(crop.x0, crop.y0).y),
+          worldToScreen(refNormToWorld(crop.x1, crop.y0).x, refNormToWorld(crop.x1, crop.y0).y),
+          worldToScreen(refNormToWorld(crop.x1, crop.y1).x, refNormToWorld(crop.x1, crop.y1).y),
+          worldToScreen(refNormToWorld(crop.x0, crop.y1).x, refNormToWorld(crop.x0, crop.y1).y)
+        ];
+        ctx.save();
+        ctx.strokeStyle = '#f59e0b';
+        ctx.lineWidth = state.traceCrop.editing ? 2 : 1.3;
+        ctx.setLineDash([6, 4]);
+        ctx.beginPath();
+        ctx.moveTo(corners[0].x, corners[0].y);
+        ctx.lineTo(corners[1].x, corners[1].y);
+        ctx.lineTo(corners[2].x, corners[2].y);
+        ctx.lineTo(corners[3].x, corners[3].y);
+        ctx.closePath();
+        ctx.stroke();
+        ctx.setLineDash([]);
+        if (state.traceCrop.editing) {
+          ctx.fillStyle = '#f59e0b';
+          for (const cp of corners) {
+            ctx.fillRect(cp.x - 4.5, cp.y - 4.5, 9, 9);
+          }
+        }
+        ctx.restore();
+      }
+
       // Live Auto-Trace Preview Overlay
       if ($('chkTraceLivePreview').checked && (state.tracePreview.lines.length > 0 || state.tracePreview.quads.length > 0)) {
+        const isContrast = previewStyle === 'contrast';
+        const isMask = previewStyle === 'mask';
         ctx.save();
         if (state.tracePreview.quads.length > 0) {
-          ctx.fillStyle = 'rgba(56, 189, 248, 0.35)';
+          ctx.fillStyle = isContrast ? 'rgba(250, 204, 21, 0.42)' : (isMask ? 'rgba(34, 211, 238, 0.45)' : 'rgba(56, 189, 248, 0.35)');
           ctx.beginPath();
           for (const q of state.tracePreview.quads) {
             const tl = worldToScreen(q.tl.x, q.tl.y);
@@ -2228,8 +3103,6 @@
           ctx.fill();
         }
         if (state.tracePreview.lines.length > 0) {
-          ctx.strokeStyle = 'rgba(56, 189, 248, 0.85)';
-          ctx.lineWidth = 1.2;
           ctx.beginPath();
           for (const l of state.tracePreview.lines) {
             const a = worldToScreen(l.x1, l.y1);
@@ -2237,7 +3110,19 @@
             ctx.moveTo(a.x, a.y);
             ctx.lineTo(b.x, b.y);
           }
-          ctx.stroke();
+          if (isContrast) {
+            ctx.strokeStyle = 'rgba(10, 14, 20, 0.85)';
+            ctx.lineWidth = 3.2;
+            ctx.lineCap = 'round';
+            ctx.stroke();
+            ctx.strokeStyle = '#22d3ee';
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+          } else {
+            ctx.strokeStyle = isMask ? 'rgba(34, 211, 238, 0.96)' : 'rgba(56, 189, 248, 0.88)';
+            ctx.lineWidth = 1.25;
+            ctx.stroke();
+          }
         }
         ctx.restore();
       }
@@ -3594,12 +4479,27 @@
         }
         ctx.stroke();
       }
+      if (state.options.brushStabilizer > 0.05 && state.drag.stabilizerPt) {
+        const sPos = worldToScreen(state.drag.stabilizerPt.x, state.drag.stabilizerPt.y);
+        ctx.strokeStyle = 'rgba(56, 189, 248, 0.85)';
+        ctx.lineWidth = 1.2;
+        ctx.setLineDash([3, 3]);
+        ctx.beginPath();
+        ctx.moveTo(sPos.x, sPos.y);
+        ctx.lineTo(state.pointer.screenX, state.pointer.screenY);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
     }
 
     if ((state.tool === 'polyline' || state.tool === 'polygon' || state.tool === 'spline') && state.polyPoints.length > 0) {
-      const rawPts = state.polyPoints.concat([{ x: state.pointer.snappedX, y: state.pointer.snappedY }]);
+      const firstSp = worldToScreen(state.polyPoints[0].x, state.polyPoints[0].y);
+      const nearStartClose = state.polyPoints.length >= 3 && Math.hypot(state.pointer.screenX - firstSp.x, state.pointer.screenY - firstSp.y) <= 10;
+      const rawPts = nearStartClose
+        ? state.polyPoints.slice()
+        : state.polyPoints.concat([{ x: state.pointer.snappedX, y: state.pointer.snappedY }]);
       const previewPts = state.tool === 'spline'
-        ? evaluateCatmullRomSpline(rawPts, state.options.splineSegs)
+        ? evaluateCatmullRomSpline(rawPts, state.options.splineSegs, nearStartClose)
         : rawPts;
       ctx.strokeStyle = '#34d399';
       ctx.fillStyle = 'rgba(52, 211, 153, 0.22)';
@@ -3622,8 +4522,9 @@
       for (let i = 0; i < state.polyPoints.length; i++) {
         const sp = worldToScreen(state.polyPoints[i].x, state.polyPoints[i].y);
         ctx.beginPath();
-        ctx.arc(sp.x, sp.y, i === 0 ? 5 : 3.5, 0, Math.PI * 2);
-        ctx.fillStyle = i === 0 && state.tool === 'polygon' ? '#f59e0b' : '#34d399';
+        const isStartAnchor = i === 0 && (state.tool === 'polygon' || state.tool === 'spline');
+        ctx.arc(sp.x, sp.y, isStartAnchor && nearStartClose ? 7 : (i === 0 ? 5 : 3.5), 0, Math.PI * 2);
+        ctx.fillStyle = isStartAnchor ? '#f59e0b' : '#34d399';
         ctx.fill();
       }
     }
@@ -3723,14 +4624,14 @@
     $('hudCoords').textContent = `X: ${formatCoord(snapped.x)}  Y: ${formatCoord(snapped.y)}`;
   }
 
-  function finishPoly(commit) {
+  function finishPoly(commit, closed = false) {
     if (commit && state.polyPoints.length >= 2) {
       if (state.tool === 'polyline') {
         addPolylineSymmetric(state.polyPoints, 'lines', state.options.brushWidth, 'draw');
         pushHistory();
       } else if (state.tool === 'spline') {
-        const curvePts = evaluateCatmullRomSpline(state.polyPoints, state.options.splineSegs);
-        addPolylineSymmetric(curvePts, state.options.splineMode, state.options.brushWidth, 'draw');
+        const curvePts = evaluateCatmullRomSpline(state.polyPoints, state.options.splineSegs, closed && state.polyPoints.length >= 3);
+        addPolylineSymmetric(curvePts, state.options.splineMode, state.options.brushWidth, 'draw', { closed: closed && state.polyPoints.length >= 3 });
         pushHistory();
       } else if (state.tool === 'polygon' && state.polyPoints.length >= 3) {
         addPolygonSymmetric(state.polyPoints, 'draw');
@@ -3763,6 +4664,24 @@
     const wy = state.pointer.worldY;
     const px = state.pointer.snappedX;
     const py = state.pointer.snappedY;
+
+    // Crop ROI box manipulation takes priority when Crop Trace Area mode is toggled
+    const cropH = getTraceCropHandleAtScreen(sx, sy);
+    if (cropH) {
+      const c = state.traceCrop;
+      if (cropH.type === 'trace-crop-draw') {
+        c.active = true;
+        c.x0 = cropH.startU;
+        c.y0 = cropH.startV;
+        c.x1 = cropH.startU;
+        c.y1 = cropH.startV;
+      }
+      state.drag = {
+        ...cropH,
+        orig: { x0: c.x0, y0: c.y0, x1: c.x1, y1: c.y1 }
+      };
+      return;
+    }
 
     // Direct Reference Image manipulation on canvas when active
     const refHandle = getRefImageHandleAtScreen(sx, sy);
@@ -3914,7 +4833,25 @@
       }
 
       case 'polyline':
+        {
+          let pt = { x: px, y: py };
+          if (e.shiftKey && state.polyPoints.length > 0) {
+            const prev = state.polyPoints[state.polyPoints.length - 1];
+            pt = snapAngle(prev.x, prev.y, wx, wy, 15);
+          }
+          state.polyPoints.push(pt);
+          requestRender();
+          break;
+        }
+
       case 'spline': {
+        if (state.polyPoints.length >= 3) {
+          const first = worldToScreen(state.polyPoints[0].x, state.polyPoints[0].y);
+          if (Math.hypot(sx - first.x, sy - first.y) <= 10) {
+            finishPoly(true, true);
+            return;
+          }
+        }
         let pt = { x: px, y: py };
         if (e.shiftKey && state.polyPoints.length > 0) {
           const prev = state.polyPoints[state.polyPoints.length - 1];
@@ -3941,7 +4878,8 @@
       case 'freehand': {
         state.drag = {
           type: 'freehand',
-          points: [{ x: wx, y: wy }]
+          points: [{ x: wx, y: wy }],
+          stabilizerPt: { x: wx, y: wy }
         };
         requestRender();
         break;
@@ -4004,20 +4942,25 @@
 
     if (!state.drag) {
       if (inside) {
-        const refH = getRefImageHandleAtScreen(sx, sy);
-        if (refH) {
-          canvas.style.cursor = refH.type === 'ref-move' ? 'move' : 'pointer';
-        } else if (state.tool === 'select') {
-          if (hitTestHudWidgetScreen(sx, sy)) {
-            canvas.style.cursor = 'move';
-          } else {
-            const handle = getHandleAtScreenPos(sx, sy);
-            if (handle) {
-              canvas.style.cursor = handle.type === 'rotate' ? 'grab' : 'pointer';
-            } else if (hitTestPoint(state.pointer.worldX, state.pointer.worldY)) {
+        const cropH = getTraceCropHandleAtScreen(sx, sy);
+        if (cropH) {
+          canvas.style.cursor = cropH.type === 'trace-crop-move' ? 'move' : 'crosshair';
+        } else {
+          const refH = getRefImageHandleAtScreen(sx, sy);
+          if (refH) {
+            canvas.style.cursor = refH.type === 'ref-move' ? 'move' : 'pointer';
+          } else if (state.tool === 'select') {
+            if (hitTestHudWidgetScreen(sx, sy)) {
               canvas.style.cursor = 'move';
             } else {
-              canvas.style.cursor = 'default';
+              const handle = getHandleAtScreenPos(sx, sy);
+              if (handle) {
+                canvas.style.cursor = handle.type === 'rotate' ? 'grab' : 'pointer';
+              } else if (hitTestPoint(state.pointer.worldX, state.pointer.worldY)) {
+                canvas.style.cursor = 'move';
+              } else {
+                canvas.style.cursor = 'default';
+              }
             }
           }
         }
@@ -4037,6 +4980,47 @@
       case 'pan': {
         state.cam.x = state.drag.origCamX - (sx - state.drag.startSx) / state.cam.scale;
         state.cam.y = state.drag.origCamY - (sy - state.drag.startSy) / state.cam.scale;
+        requestRender();
+        break;
+      }
+
+      case 'trace-crop-corner': {
+        const { u, v } = worldToRefNorm(wx, wy);
+        const c = state.traceCrop;
+        const cu = Math.max(0, Math.min(1, u)), cv = Math.max(0, Math.min(1, v));
+        const key = state.drag.key;
+        if (key.includes('w')) c.x0 = Math.min(c.x1 - 0.04, cu);
+        if (key.includes('e')) c.x1 = Math.max(c.x0 + 0.04, cu);
+        if (key.includes('n')) c.y0 = Math.min(c.y1 - 0.04, cv);
+        if (key.includes('s')) c.y1 = Math.max(c.y0 + 0.04, cv);
+        c.active = true;
+        requestRender();
+        break;
+      }
+
+      case 'trace-crop-move': {
+        const { u, v } = worldToRefNorm(wx, wy);
+        const c = state.traceCrop;
+        const o = state.drag.orig;
+        const wSpan = o.x1 - o.x0, hSpan = o.y1 - o.y0;
+        const du = Math.max(-o.x0, Math.min(1 - o.x1, u - state.drag.startU));
+        const dv = Math.max(-o.y0, Math.min(1 - o.y1, v - state.drag.startV));
+        c.x0 = o.x0 + du; c.x1 = c.x0 + wSpan;
+        c.y0 = o.y0 + dv; c.y1 = c.y0 + hSpan;
+        c.active = true;
+        requestRender();
+        break;
+      }
+
+      case 'trace-crop-draw': {
+        const { u, v } = worldToRefNorm(wx, wy);
+        const c = state.traceCrop;
+        const cu = Math.max(0, Math.min(1, u)), cv = Math.max(0, Math.min(1, v));
+        c.x0 = Math.min(state.drag.startU, cu);
+        c.x1 = Math.max(state.drag.startU, cu);
+        c.y0 = Math.min(state.drag.startV, cv);
+        c.y1 = Math.max(state.drag.startV, cv);
+        c.active = true;
         requestRender();
         break;
       }
@@ -4174,10 +5158,15 @@
         const pts = state.drag.points;
         const last = pts[pts.length - 1];
         const minStep = 2.0 / state.cam.scale;
-        if (Math.hypot(wx - last.x, wy - last.y) >= minStep) {
-          pts.push({ x: wx, y: wy });
-          requestRender();
+        const stab = state.options.brushStabilizer || 0;
+        const alpha = 1 - stab * 0.88;
+        const st = state.drag.stabilizerPt || (state.drag.stabilizerPt = { x: wx, y: wy });
+        st.x += (wx - st.x) * alpha;
+        st.y += (wy - st.y) * alpha;
+        if (Math.hypot(st.x - last.x, st.y - last.y) >= minStep) {
+          pts.push({ x: st.x, y: st.y });
         }
+        requestRender();
         break;
       }
 
@@ -4328,11 +5317,25 @@
         addLineSymmetric(d.x1, d.y1, d.x2, d.y2, 'draw');
         pushHistory();
       }
+    } else if (d.type === 'trace-crop-corner' || d.type === 'trace-crop-move' || d.type === 'trace-crop-draw') {
+      const c = state.traceCrop;
+      if (c.x1 - c.x0 < 0.04 || c.y1 - c.y0 < 0.04) {
+        c.active = false;
+        c.x0 = 0; c.y0 = 0; c.x1 = 1; c.y1 = 1;
+      }
+      if ($('btnTraceCropReset')) $('btnTraceCropReset').disabled = !c.active;
+      scheduleLiveTracePreview();
     } else if (d.type === 'freehand') {
+      if (d.stabilizerPt && d.points.length >= 1) {
+        const tail = d.points[d.points.length - 1];
+        if (Math.hypot(d.stabilizerPt.x - tail.x, d.stabilizerPt.y - tail.y) > 1e-5) {
+          d.points.push({ x: d.stabilizerPt.x, y: d.stabilizerPt.y });
+        }
+      }
       if (d.points.length >= 2) {
         const simplified = rdpSimplify(d.points, state.options.simplifyTol);
         if (simplified.length >= 2) {
-          addPolylineSymmetric(simplified, state.options.brushMode, state.options.brushWidth, 'draw');
+          addPolylineSymmetric(simplified, state.options.brushMode, state.options.brushWidth, 'draw', { taper: !!state.options.brushTaper });
           pushHistory();
         }
       }
@@ -4384,6 +5387,14 @@
         state.selection.add(hit.item.id);
         selectConnectedChainFromSelection();
       }
+    }
+  });
+
+  canvas.addEventListener('contextmenu', (e) => {
+    if ((state.tool === 'polyline' || state.tool === 'polygon' || state.tool === 'spline') && state.polyPoints.length > 0) {
+      e.preventDefault();
+      state.polyPoints.pop();
+      requestRender();
     }
   });
 
@@ -4473,64 +5484,672 @@
   });
 
   // =========================================================================
-  // Studio-Grade Sub-Pixel Multi-Mode Auto-Draw Vectorizer
+  // Studio-Grade Sub-Pixel & Topology-Aware Auto-Draw Vectorizer + SVG Import
   // =========================================================================
-  function smoothPixelChainSubpixel(chain, passes = 2) {
-    if (chain.length <= 2) return chain;
-    let pts = chain.map((p) => ({ x: p.x, y: p.y }));
-    const isClosed = Math.hypot(pts[0].x - pts[pts.length - 1].x, pts[0].y - pts[pts.length - 1].y) <= 1.5 && pts.length > 4;
 
-    for (let pass = 0; pass < passes; pass++) {
-      const next = pts.map((p) => ({ x: p.x, y: p.y }));
-      for (let i = 1; i < pts.length - 1; i++) {
-        // Corner preservation: if vertex turns sharply (> 42 deg), keep corner crisp
-        const dx1 = pts[i].x - pts[i - 1].x, dy1 = pts[i].y - pts[i - 1].y;
-        const dx2 = pts[i + 1].x - pts[i].x, dy2 = pts[i + 1].y - pts[i].y;
-        const l1 = Math.hypot(dx1, dy1) || 1, l2 = Math.hypot(dx2, dy2) || 1;
-        const cosA = (dx1 * dx2 + dy1 * dy2) / (l1 * l2);
-        if (cosA < 0.35) continue;
-        next[i].x = 0.25 * pts[i - 1].x + 0.5 * pts[i].x + 0.25 * pts[i + 1].x;
-        next[i].y = 0.25 * pts[i - 1].y + 0.5 * pts[i].y + 0.25 * pts[i + 1].y;
-      }
-      if (isClosed) {
-        next[0].x = 0.25 * pts[pts.length - 2].x + 0.5 * pts[0].x + 0.25 * pts[1].x;
-        next[0].y = 0.25 * pts[pts.length - 2].y + 0.5 * pts[0].y + 0.25 * pts[1].y;
-        next[pts.length - 1].x = next[0].x;
-        next[pts.length - 1].y = next[0].y;
-      }
-      pts = next;
+  /**
+   * Eight-connected Zhang-Suen thinning on a 1px-padded binary canvas so edges touching crop borders stay intact.
+   */
+  function thinMaskZhangSuen(srcBin, w, h) {
+    const pw = w + 2;
+    const ph = h + 2;
+    const buf = new Uint8Array(pw * ph);
+    for (let y = 0; y < h; y++) {
+      const sOff = y * w;
+      const dOff = (y + 1) * pw + 1;
+      for (let x = 0; x < w; x++) buf[dOff + x] = srcBin[sOff + x] ? 1 : 0;
     }
-    return pts;
+
+    const toClear = [];
+    for (let iter = 0; iter < 96; iter++) {
+      let changed = false;
+      for (let step = 0; step < 2; step++) {
+        toClear.length = 0;
+        for (let y = 1; y <= h; y++) {
+          for (let x = 1; x <= w; x++) {
+            const i = y * pw + x;
+            if (!buf[i]) continue;
+            const p2 = buf[i - pw], p3 = buf[i - pw + 1], p4 = buf[i + 1], p5 = buf[i + pw + 1];
+            const p6 = buf[i + pw], p7 = buf[i + pw - 1], p8 = buf[i - 1], p9 = buf[i - pw - 1];
+            const B = p2 + p3 + p4 + p5 + p6 + p7 + p8 + p9;
+            if (B < 2 || B > 6) continue;
+            const A =
+              (!p2 && p3 ? 1 : 0) + (!p3 && p4 ? 1 : 0) + (!p4 && p5 ? 1 : 0) + (!p5 && p6 ? 1 : 0) +
+              (!p6 && p7 ? 1 : 0) + (!p7 && p8 ? 1 : 0) + (!p8 && p9 ? 1 : 0) + (!p9 && p2 ? 1 : 0);
+            if (A !== 1) continue;
+            if (step === 0) {
+              if (p2 * p4 * p6 !== 0 || p4 * p6 * p8 !== 0) continue;
+            } else {
+              if (p2 * p4 * p8 !== 0 || p2 * p6 * p8 !== 0) continue;
+            }
+            toClear.push(i);
+          }
+        }
+        if (toClear.length > 0) {
+          changed = true;
+          for (let k = 0; k < toClear.length; k++) buf[toClear[k]] = 0;
+        }
+      }
+      if (!changed) break;
+    }
+
+    const out = new Uint8Array(w * h);
+    for (let y = 0; y < h; y++) {
+      const sOff = (y + 1) * pw + 1;
+      const dOff = y * w;
+      for (let x = 0; x < w; x++) out[dOff + x] = buf[sOff + x];
+    }
+    return out;
+  }
+
+  /**
+   * Prune short dead-end twig spurs attached to junctions (leaves true open curves & isolated strokes untouched).
+   */
+  function pruneSkeletonSpurs(edges, w, h, maxSpurLen) {
+    if (!maxSpurLen || maxSpurLen <= 0) return;
+    const dirs = [[-1, -1], [0, -1], [1, -1], [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0]];
+    const deg = new Uint8Array(w * h);
+
+    function computeDeg(i) {
+      if (!edges[i]) return 0;
+      const x = i % w, y = (i / w) | 0;
+      let d = 0;
+      for (let k = 0; k < 8; k++) {
+        const nx = x + dirs[k][0], ny = y + dirs[k][1];
+        if (nx >= 0 && nx < w && ny >= 0 && ny < h && edges[ny * w + nx]) d++;
+      }
+      return d;
+    }
+
+    let prunedAny = true;
+    let passes = 0;
+    while (prunedAny && passes++ < 16) {
+      prunedAny = false;
+      for (let i = 0; i < w * h; i++) deg[i] = edges[i] ? computeDeg(i) : 0;
+
+      for (let i = 0; i < w * h; i++) {
+        if (!edges[i] || deg[i] !== 1) continue;
+        const twig = [i];
+        let prev = -1;
+        let curr = i;
+        let hitJunction = false;
+
+        for (let step = 0; step < maxSpurLen; step++) {
+          const x = curr % w, y = (curr / w) | 0;
+          let next = -1;
+          for (let k = 0; k < 8; k++) {
+            const nx = x + dirs[k][0], ny = y + dirs[k][1];
+            if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
+            const ni = ny * w + nx;
+            if (ni !== prev && edges[ni]) {
+              next = ni;
+              break;
+            }
+          }
+          if (next < 0) break;
+          if (deg[next] >= 3) {
+            hitJunction = true;
+            break;
+          }
+          if (deg[next] !== 2) break;
+          twig.push(next);
+          prev = curr;
+          curr = next;
+        }
+
+        if (hitJunction && twig.length <= maxSpurLen) {
+          for (const px of twig) edges[px] = 0;
+          prunedAny = true;
+        }
+      }
+    }
+  }
+
+  /**
+   * Extract a topological skeleton graph with clustered Junction Super-Nodes,
+   * then merge tangent-aligned crossing branches across X-junctions and T-crossbars.
+   */
+  function extractSkeletonGraphAndMerge(edges, w, h) {
+    const N = w * h;
+    const dirs = [
+      [1, 0], [0, 1], [-1, 0], [0, -1],
+      [1, 1], [-1, 1], [-1, -1], [1, -1]
+    ];
+    const deg = new Uint8Array(N);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x;
+        if (!edges[i]) continue;
+        let d = 0;
+        for (let k = 0; k < 8; k++) {
+          const nx = x + dirs[k][0], ny = y + dirs[k][1];
+          if (nx >= 0 && nx < w && ny >= 0 && ny < h && edges[ny * w + nx]) d++;
+        }
+        deg[i] = d;
+      }
+    }
+
+    const nodeOfPixel = new Int32Array(N).fill(-1);
+    const nodes = [];
+
+    // 1. Cluster adjacent degree >= 3 junction pixels into single Junction Super-Nodes
+    for (let i = 0; i < N; i++) {
+      if (!edges[i] || deg[i] < 3 || nodeOfPixel[i] >= 0) continue;
+      const nodeId = nodes.length;
+      const queue = [i];
+      nodeOfPixel[i] = nodeId;
+      let sx = 0, sy = 0;
+      const pixels = [];
+      while (queue.length > 0) {
+        const curr = queue.pop();
+        pixels.push(curr);
+        const cx = curr % w, cy = (curr / w) | 0;
+        sx += cx + 0.5;
+        sy += cy + 0.5;
+        for (let k = 0; k < 8; k++) {
+          const nx = cx + dirs[k][0], ny = cy + dirs[k][1];
+          if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
+          const ni = ny * w + nx;
+          if (edges[ni] && deg[ni] >= 3 && nodeOfPixel[ni] < 0) {
+            nodeOfPixel[ni] = nodeId;
+            queue.push(ni);
+          }
+        }
+      }
+      nodes.push({
+        id: nodeId,
+        isJunction: true,
+        centroid: { x: sx / pixels.length, y: sy / pixels.length },
+        pixels
+      });
+    }
+
+    // 2. Register degree-1 pixels as Endpoint Nodes
+    for (let i = 0; i < N; i++) {
+      if (!edges[i] || deg[i] !== 1 || nodeOfPixel[i] >= 0) continue;
+      const nodeId = nodes.length;
+      nodeOfPixel[i] = nodeId;
+      nodes.push({
+        id: nodeId,
+        isJunction: false,
+        centroid: { x: (i % w) + 0.5, y: ((i / w) | 0) + 0.5 },
+        pixels: [i]
+      });
+    }
+
+    const visitedChain = new Uint8Array(N);
+    const seenDirect = new Set();
+    const rawEdges = [];
+
+    // 3. Walk all non-junction pixel chains between nodes (guarantees shared exact node centroids!)
+    for (const node of nodes) {
+      for (const pIdx of node.pixels) {
+        const px = pIdx % w, py = (pIdx / w) | 0;
+        for (let k = 0; k < 8; k++) {
+          const nx = px + dirs[k][0], ny = py + dirs[k][1];
+          if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
+          const ni = ny * w + nx;
+          if (!edges[ni]) continue;
+
+          if (nodeOfPixel[ni] >= 0) {
+            const otherNode = nodeOfPixel[ni];
+            if (otherNode === node.id) continue;
+            const pairKey = `${Math.min(node.id, otherNode)}_${Math.max(node.id, otherNode)}`;
+            if (seenDirect.has(pairKey)) continue;
+            seenDirect.add(pairKey);
+            rawEdges.push({
+              pts: [{ ...node.centroid }, { ...nodes[otherNode].centroid }],
+              startNode: node.id,
+              endNode: otherNode,
+              closed: false
+            });
+            continue;
+          }
+
+          if (visitedChain[ni]) continue;
+          const pts = [{ ...node.centroid }];
+          let prev = pIdx;
+          let curr = ni;
+          visitedChain[curr] = 1;
+          pts.push({ x: (curr % w) + 0.5, y: ((curr / w) | 0) + 0.5 });
+
+          let endNode = -1;
+          let guard = 0;
+          while (guard++ < N) {
+            const cx = curr % w, cy = (curr / w) | 0;
+            let nextPx = -1;
+            let nextIsNode = false;
+
+            for (let m = 0; m < 8; m++) {
+              const mx = cx + dirs[m][0], my = cy + dirs[m][1];
+              if (mx < 0 || mx >= w || my < 0 || my >= h) continue;
+              const mi = my * w + mx;
+              if (!edges[mi] || mi === prev) continue;
+              if (nodeOfPixel[mi] >= 0) {
+                // Only count junction node if it isn't the starting node within the first step unless it's a valid return loop
+                if (nodeOfPixel[mi] === node.id && pts.length <= 2) continue;
+                nextPx = mi;
+                nextIsNode = true;
+                break;
+              }
+              if (!visitedChain[mi]) {
+                nextPx = mi;
+                break;
+              }
+            }
+
+            if (nextPx < 0) break;
+            if (nextIsNode) {
+              endNode = nodeOfPixel[nextPx];
+              pts.push({ ...nodes[endNode].centroid });
+              break;
+            }
+            visitedChain[nextPx] = 1;
+            pts.push({ x: (nextPx % w) + 0.5, y: ((nextPx / w) | 0) + 0.5 });
+            prev = curr;
+            curr = nextPx;
+          }
+
+          if (pts.length >= 2) {
+            rawEdges.push({
+              pts,
+              startNode: node.id,
+              endNode,
+              closed: false
+            });
+          }
+        }
+      }
+    }
+
+    // 4. Walk isolated closed loops (all pixels deg === 2, no nodes)
+    for (let i = 0; i < N; i++) {
+      if (!edges[i] || deg[i] < 2 || nodeOfPixel[i] >= 0 || visitedChain[i]) continue;
+      const loopPts = [];
+      let prev = -1;
+      let curr = i;
+      let guard = 0;
+      while (guard++ < N) {
+        visitedChain[curr] = 1;
+        loopPts.push({ x: (curr % w) + 0.5, y: ((curr / w) | 0) + 0.5 });
+        const cx = curr % w, cy = (curr / w) | 0;
+        let nextPx = -1;
+        for (let m = 0; m < 8; m++) {
+          const mx = cx + dirs[m][0], my = cy + dirs[m][1];
+          if (mx < 0 || mx >= w || my < 0 || my >= h) continue;
+          const mi = my * w + mx;
+          if (mi !== prev && edges[mi] && nodeOfPixel[mi] < 0 && !visitedChain[mi]) {
+            nextPx = mi;
+            break;
+          }
+        }
+        if (nextPx < 0) break;
+        prev = curr;
+        curr = nextPx;
+      }
+      if (loopPts.length >= 3) {
+        const first = loopPts[0], last = loopPts[loopPts.length - 1];
+        const isClosed = Math.hypot(first.x - last.x, first.y - last.y) <= 2.2;
+        if (isClosed) loopPts.push({ x: first.x, y: first.y });
+        rawEdges.push({ pts: loopPts, startNode: -1, endNode: -1, closed: isClosed });
+      }
+    }
+
+    // 5. Merge collinear / smooth X-crossing & T-crossbar branches across Junction Super-Nodes
+    const nodeInc = new Map();
+    function addInc(nodeId, edgeIdx, atStart) {
+      if (nodeId < 0 || !nodes[nodeId].isJunction) return;
+      if (!nodeInc.has(nodeId)) nodeInc.set(nodeId, []);
+      nodeInc.get(nodeId).push({ edgeIdx, atStart });
+    }
+    rawEdges.forEach((e, idx) => {
+      addInc(e.startNode, idx, true);
+      addInc(e.endNode, idx, false);
+    });
+
+    function edgeOutwardDir(edgeIdx, atStart) {
+      const pts = rawEdges[edgeIdx].pts;
+      if (pts.length < 2) return { x: 1, y: 0 };
+      const p0 = atStart ? pts[0] : pts[pts.length - 1];
+      let target = atStart ? pts[pts.length - 1] : pts[0];
+      const maxSteps = Math.min(pts.length - 1, 8);
+      for (let k = 1; k <= maxSteps; k++) {
+        const pt = atStart ? pts[k] : pts[pts.length - 1 - k];
+        target = pt;
+        if (Math.hypot(pt.x - p0.x, pt.y - p0.y) >= 4.0) break;
+      }
+      const dx = target.x - p0.x, dy = target.y - p0.y;
+      const len = Math.hypot(dx, dy) || 1;
+      return { x: dx / len, y: dy / len };
+    }
+
+    // endMatch.get("edgeIdx:0|1") => partner "edgeIdx:0|1"
+    const endMatch = new Map();
+    const unmergedTStems = []; // { edgeIdx, atStart, junctionNodeId }
+
+    for (const [nodeId, list] of nodeInc.entries()) {
+      const dirsList = list.map((inc) => ({ ...inc, dir: edgeOutwardDir(inc.edgeIdx, inc.atStart) }));
+      const pairs = [];
+      for (let a = 0; a < dirsList.length; a++) {
+        for (let b = a + 1; b < dirsList.length; b++) {
+          const ia = dirsList[a], ib = dirsList[b];
+          if (ia.edgeIdx === ib.edgeIdx) continue;
+          const align = -(ia.dir.x * ib.dir.x + ia.dir.y * ib.dir.y); // 1.0 = straight 180 deg across junction
+          if (align >= 0.72) {
+            pairs.push({ a: ia, b: ib, align });
+          }
+        }
+      }
+      pairs.sort((u, v) => v.align - u.align);
+      const usedEnd = new Set();
+      for (const p of pairs) {
+        const ka = `${p.a.edgeIdx}:${p.a.atStart ? 0 : 1}`;
+        const kb = `${p.b.edgeIdx}:${p.b.atStart ? 0 : 1}`;
+        if (usedEnd.has(ka) || usedEnd.has(kb)) continue;
+        usedEnd.add(ka);
+        usedEnd.add(kb);
+        endMatch.set(ka, kb);
+        endMatch.set(kb, ka);
+      }
+      for (const inc of list) {
+        const k = `${inc.edgeIdx}:${inc.atStart ? 0 : 1}`;
+        if (!usedEnd.has(k)) {
+          unmergedTStems.push({ edgeIdx: inc.edgeIdx, atStart: inc.atStart, junctionNodeId: nodeId });
+        }
+      }
+    }
+
+    // Stitch paired edges into long unbroken strokes
+    const consumedEdge = new Uint8Array(rawEdges.length);
+    const outChains = [];
+
+    function appendEdgePts(targetPts, edgeIdx, forward) {
+      const src = rawEdges[edgeIdx].pts;
+      if (forward) {
+        for (let k = targetPts.length ? 1 : 0; k < src.length; k++) targetPts.push({ ...src[k] });
+      } else {
+        for (let k = targetPts.length ? src.length - 2 : src.length - 1; k >= 0; k--) targetPts.push({ ...src[k] });
+      }
+    }
+
+    function walkMatchedChain(startEdge, forwardInit) {
+      // Trace backwards to find true open chain start if possible
+      let curEdge = startEdge;
+      let curEnterSide = forwardInit ? 0 : 1; // 0 = entering at start, going to 1 (end)
+      const visitedLocal = new Set([startEdge]);
+
+      while (true) {
+        const prevPartner = endMatch.get(`${curEdge}:${curEnterSide}`);
+        if (!prevPartner) break;
+        const [pEdgeStr, pSideStr] = prevPartner.split(':');
+        const pEdge = parseInt(pEdgeStr, 10);
+        const pSide = parseInt(pSideStr, 10);
+        if (visitedLocal.has(pEdge) || consumedEdge[pEdge]) break;
+        visitedLocal.add(pEdge);
+        curEdge = pEdge;
+        curEnterSide = pSide === 0 ? 1 : 0; // enter other side of partner
+      }
+
+      const combinedPts = [];
+      const edgeIdsInChain = [];
+      let walkEdge = curEdge;
+      let walkForward = curEnterSide === 0;
+      let closedLoop = false;
+
+      while (true) {
+        if (consumedEdge[walkEdge]) {
+          if (walkEdge === curEdge && edgeIdsInChain.length >= 2) closedLoop = true;
+          break;
+        }
+        consumedEdge[walkEdge] = 1;
+        edgeIdsInChain.push(walkEdge);
+        appendEdgePts(combinedPts, walkEdge, walkForward);
+
+        const exitSide = walkForward ? 1 : 0;
+        const nextPartner = endMatch.get(`${walkEdge}:${exitSide}`);
+        if (!nextPartner) break;
+        const [nEdgeStr, nSideStr] = nextPartner.split(':');
+        const nEdge = parseInt(nEdgeStr, 10);
+        const nSide = parseInt(nSideStr, 10);
+        if (nEdge === curEdge && edgeIdsInChain.length >= 1) {
+          closedLoop = true;
+          break;
+        }
+        walkEdge = nEdge;
+        walkForward = nSide === 0;
+      }
+
+      const baseEdge = rawEdges[curEdge];
+      const lastEdge = rawEdges[walkEdge];
+      const startNodeId = curEnterSide === 0 ? baseEdge.startNode : baseEdge.endNode;
+      const exitSideFinal = walkForward ? 1 : 0;
+      const endNodeId = exitSideFinal === 1 ? lastEdge.endNode : lastEdge.startNode;
+      const isClosedOut = rawEdges.length === 1 ? baseEdge.closed : (baseEdge.closed || closedLoop);
+      return {
+        pts: combinedPts,
+        closed: isClosedOut,
+        startJunction: !isClosedOut && startNodeId >= 0 && nodes[startNodeId]?.isJunction ? startNodeId : -1,
+        endJunction: !isClosedOut && endNodeId >= 0 && nodes[endNodeId]?.isJunction ? endNodeId : -1,
+        mergedCount: edgeIdsInChain.length
+      };
+    }
+
+    // Walk unmerged-start chains first, then any remaining closed crossing rings
+    for (let ei = 0; ei < rawEdges.length; ei++) {
+      if (consumedEdge[ei]) continue;
+      if (!endMatch.has(`${ei}:0`) || !endMatch.has(`${ei}:1`)) {
+        outChains.push(walkMatchedChain(ei, true));
+      }
+    }
+    for (let ei = 0; ei < rawEdges.length; ei++) {
+      if (!consumedEdge[ei]) {
+        outChains.push(walkMatchedChain(ei, true));
+      }
+    }
+
+    return outChains;
+  }
+
+  /**
+   * Extract smooth sub-pixel Marching Squares contours as pixel-space closed or open chains.
+   * Field samples sit at pixel centers (x + 0.5, y + 0.5).
+   */
+  function extractMarchingContours(field, w, h) {
+    const table = [
+      [], [[3, 2]], [[2, 1]], [[3, 1]],
+      [[0, 1]], [[0, 3], [2, 1]], [[0, 2]], [[3, 0]],
+      [[3, 0]], [[0, 2]], [[0, 1], [3, 2]], [[0, 1]],
+      [[3, 1]], [[2, 1]], [[3, 2]], []
+    ];
+    const adj = new Map();
+    const ptPool = [];
+    const keyToId = new Map();
+
+    function getVertexId(px, py) {
+      const k = `${Math.round(px * 60)},${Math.round(py * 60)}`;
+      let id = keyToId.get(k);
+      if (id === undefined) {
+        id = ptPool.length;
+        ptPool.push({ x: px, y: py });
+        keyToId.set(k, id);
+        adj.set(id, []);
+      }
+      return id;
+    }
+
+    function interp(x1, y1, v1, x2, y2, v2) {
+      const denom = v1 - v2;
+      const t = Math.abs(denom) < 1e-5 ? 0.5 : Math.max(0, Math.min(1, v1 / denom));
+      return { x: x1 + (x2 - x1) * t + 0.5, y: y1 + (y2 - y1) * t + 0.5 };
+    }
+
+    const rawSegs = [];
+    for (let y = 0; y < h - 1; y++) {
+      for (let x = 0; x < w - 1; x++) {
+        const i = y * w + x;
+        const v0 = field[i], v1 = field[i + 1], v2 = field[i + w + 1], v3 = field[i + w];
+        const idx = (v0 > 0 ? 8 : 0) | (v1 > 0 ? 4 : 0) | (v2 > 0 ? 2 : 0) | (v3 > 0 ? 1 : 0);
+        const pairs = table[idx];
+        if (!pairs || pairs.length === 0) continue;
+
+        const edgePt = (e) => {
+          if (e === 0) return interp(x, y, v0, x + 1, y, v1);
+          if (e === 1) return interp(x + 1, y, v1, x + 1, y + 1, v2);
+          if (e === 2) return interp(x, y + 1, v3, x + 1, y + 1, v2);
+          return interp(x, y, v0, x, y + 1, v3);
+        };
+
+        for (const [eA, eB] of pairs) {
+          const pA = edgePt(eA);
+          const pB = edgePt(eB);
+          const u = getVertexId(pA.x, pA.y);
+          const v = getVertexId(pB.x, pB.y);
+          if (u !== v) {
+            const segId = rawSegs.length;
+            rawSegs.push({ u, v, used: false });
+            adj.get(u).push({ to: v, segId });
+            adj.get(v).push({ to: u, segId });
+          }
+        }
+      }
+    }
+
+    const chains = [];
+    for (let s = 0; s < rawSegs.length; s++) {
+      if (rawSegs[s].used) continue;
+      rawSegs[s].used = true;
+      const forward = [ptPool[rawSegs[s].v]];
+      const backward = [ptPool[rawSegs[s].u]];
+
+      let curr = rawSegs[s].v;
+      while (true) {
+        const list = adj.get(curr) || [];
+        const nextEdge = list.find((e) => !rawSegs[e.segId].used);
+        if (!nextEdge) break;
+        rawSegs[nextEdge.segId].used = true;
+        curr = nextEdge.to;
+        forward.push(ptPool[curr]);
+      }
+
+      curr = rawSegs[s].u;
+      while (true) {
+        const list = adj.get(curr) || [];
+        const nextEdge = list.find((e) => !rawSegs[e.segId].used);
+        if (!nextEdge) break;
+        rawSegs[nextEdge.segId].used = true;
+        curr = nextEdge.to;
+        backward.push(ptPool[curr]);
+      }
+
+      backward.reverse();
+      const chain = backward.concat(forward);
+      if (chain.length >= 2) {
+        const closed = chain.length >= 4 && Math.hypot(chain[0].x - chain[chain.length - 1].x, chain[0].y - chain[chain.length - 1].y) <= 0.8;
+        chains.push({ pts: chain, closed });
+      }
+    }
+    return chains;
+  }
+
+  /**
+   * Organize closed pixel-space contours into outer shapes and their directly enclosed holes (e.g. eye glints).
+   */
+  function nestClosedContoursWithHoles(closedLoops) {
+    const items = closedLoops.map((loop, idx) => {
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+      for (const p of loop) {
+        if (p.x < minX) minX = p.x;
+        if (p.x > maxX) maxX = p.x;
+        if (p.y < minY) minY = p.y;
+        if (p.y > maxY) maxY = p.y;
+      }
+      return {
+        idx,
+        pts: loop,
+        area: Math.abs(polySignedArea(loop)),
+        minX, maxX, minY, maxY,
+        testPt: loop[0],
+        parent: -1,
+        depth: 0,
+        holes: []
+      };
+    });
+
+    items.sort((a, b) => b.area - a.area);
+    for (let i = 0; i < items.length; i++) {
+      const c = items[i];
+      let parentIdx = -1;
+      let depth = 0;
+      for (let j = i - 1; j >= 0; j--) {
+        const p = items[j];
+        if (c.minX < p.minX || c.maxX > p.maxX || c.minY < p.minY || c.maxY > p.maxY) continue;
+        if (pointInPolygon(c.testPt, p.pts)) {
+          depth++;
+          if (parentIdx === -1) parentIdx = j;
+        }
+      }
+      c.parent = parentIdx;
+      c.depth = depth;
+    }
+
+    const outers = [];
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].depth % 2 === 0) {
+        outers.push(items[i]);
+      } else if (items[i].parent >= 0) {
+        items[items[i].parent].holes.push(items[i].pts);
+      }
+    }
+    return outers;
   }
 
   function computeImageVectorTrace() {
     const r = state.refImage;
-    if (!r.img) return { lines: [], quads: [] };
+    if (!r.img) return { lines: [], quads: [], maskCanvas: null };
 
-    const mode = $('selTraceMode').value; // 'centerline' | 'marching' | 'canny' | 'hybrid'
+    const mode = $('selTraceMode').value; // 'centerline' | 'hybrid' | 'marching' | 'canny'
     const sens = parseFloat($('rngTraceSens').value) || 72; // 5..99
     const contrastBoost = parseFloat($('rngTraceContrast').value) || 1.6; // 1..4
     const maxDim = parseInt($('rngTraceRes').value, 10) || 640;
     const simplifyPx = parseFloat($('rngTraceSimplify').value) || 0.65;
     const minChainLen = parseInt($('rngTraceMinLen').value, 10) || 3;
-    const strokeOutput = $('selTraceOutput')?.value || 'lines'; // 'lines' | 'quadRibbon'
+    const spurMaxLen = parseInt($('rngTraceSpur')?.value, 10);
+    const spurLimit = Number.isNaN(spurMaxLen) ? 3 : spurMaxLen;
+    const solidRadPx = parseFloat($('rngTraceSolidRad')?.value) || 4.5;
+    const solidStyle = $('selTraceSolidStyle')?.value || 'fill'; // 'fill' | 'outline'
+    const strokeOutput = $('selTraceOutput')?.value || 'lines'; // 'lines' | 'quadRibbon' | 'variableInk'
+    const previewStyle = $('selTracePreviewStyle')?.value || 'cyan';
     const invert = $('chkTraceInvert').checked;
+    const weldGaps = !!$('chkTraceWeldGaps')?.checked;
 
-    const aspect = r.img.width / (r.img.height || 1);
+    const crop = state.traceCrop;
+    const cx0 = crop.active ? Math.max(0, Math.min(0.95, crop.x0)) : 0;
+    const cy0 = crop.active ? Math.max(0, Math.min(0.95, crop.y0)) : 0;
+    const cx1 = crop.active ? Math.max(cx0 + 0.04, Math.min(1, crop.x1)) : 1;
+    const cy1 = crop.active ? Math.max(cy0 + 0.04, Math.min(1, crop.y1)) : 1;
+    const cropWFrac = cx1 - cx0;
+    const cropHFrac = cy1 - cy0;
+
+    const sx = cx0 * r.img.width;
+    const sy = cy0 * r.img.height;
+    const sw = Math.max(4, cropWFrac * r.img.width);
+    const sh = Math.max(4, cropHFrac * r.img.height);
+
+    const cropAspect = sw / sh;
     let w, h;
-    if (r.img.width >= r.img.height) {
-      w = Math.min(maxDim, Math.max(32, r.img.width));
-      h = Math.max(16, Math.round(w / aspect));
+    if (sw >= sh) {
+      w = Math.max(32, Math.min(maxDim, Math.round(maxDim)));
+      h = Math.max(16, Math.round(w / cropAspect));
     } else {
-      h = Math.min(maxDim, Math.max(32, r.img.height));
-      w = Math.max(16, Math.round(h * aspect));
+      h = Math.max(32, Math.min(maxDim, Math.round(maxDim)));
+      w = Math.max(16, Math.round(h * cropAspect));
     }
 
     const off = document.createElement('canvas');
     off.width = w;
     off.height = h;
     const octx = off.getContext('2d');
-    octx.drawImage(r.img, 0, 0, w, h);
+    octx.drawImage(r.img, sx, sy, sw, sh, 0, 0, w, h);
     const imgData = octx.getImageData(0, 0, w, h).data;
 
     const N = w * h;
@@ -4548,7 +6167,6 @@
       const gC = imgData[idx + 1] * a + bg * (1 - a);
       const bC = imgData[idx + 2] * a + bg * (1 - a);
       const stdLum = 0.299 * rC + 0.587 * gC + 0.114 * bC;
-      // Blend with darkest RGB channel so colored strokes (like red cheek blush) are detected cleanly
       const chromaDark = invert ? Math.max(rC, gC, bC) : Math.min(rC, gC, bC);
       let l = 0.5 * stdLum + 0.5 * chromaDark;
       if (invert) l = 255 - l;
@@ -4558,8 +6176,6 @@
     }
 
     const meanLum = sumLum / (N || 1);
-
-    // Otsu's Automatic Optimal Global Threshold + Background Peak Detection
     let sumAll = 0;
     for (let t = 0; t < 256; t++) sumAll += t * hist[t];
     let sumB = 0, wB = 0, maxVar = -1, otsuThresh = 160;
@@ -4578,11 +6194,9 @@
       }
     }
 
-    // Contrast boost + 3x3 Gaussian smoothing
     const lum = new Float32Array(N);
     for (let i = 0; i < N; i++) {
-      const boosted = (rawLum[i] - meanLum) * contrastBoost + meanLum;
-      lum[i] = Math.max(0, Math.min(255, boosted));
+      lum[i] = Math.max(0, Math.min(255, (rawLum[i] - meanLum) * contrastBoost + meanLum));
     }
 
     const smooth = new Float32Array(N);
@@ -4600,9 +6214,6 @@
       }
     }
 
-    // Background-Only 2D Integral Image: excludes dark foreground pixels (< otsuThresh)
-    // so thick dark areas (like solid black eyes) NEVER drag down the local background estimate
-    // or cause threshold indentations around/inside the eyes!
     const stride = w + 1;
     const bgSumIntegral = new Float64Array((w + 1) * (h + 1));
     const bgCntIntegral = new Uint32Array((w + 1) * (h + 1));
@@ -4644,309 +6255,271 @@
       return Math.max(globalBgMean * 0.88, sum / cnt);
     }
 
+    const imgAspect = r.img.width / (r.img.height || 1);
     const worldH = r.scale;
-    const worldW = worldH * aspect;
+    const worldW = worldH * imgAspect;
     const rotRad = (r.rotation * Math.PI) / 180;
     const cosR = Math.cos(rotRad);
     const sinR = Math.sin(rotRad);
 
     function pixelToWorld(px, py) {
-      const lx = (px / w - 0.5) * worldW;
-      const ly = (py / h - 0.5) * worldH;
+      const u = cx0 + (px / w) * cropWFrac;
+      const v = cy0 + (py / h) * cropHFrac;
+      const lx = (u - 0.5) * worldW;
+      const ly = (v - 0.5) * worldH;
       return {
         x: r.x + lx * cosR - ly * sinR,
         y: r.y + lx * sinR + ly * cosR
       };
     }
 
+    const pxWorldSize = (cropWFrac * worldW) / w;
+    const winRad = Math.max(12, Math.round(Math.min(w, h) / 20));
+    const localMargin = Math.max(4, 68 * Math.pow(1 - sens / 100, 1.35));
+
+    const bin = new Uint8Array(N);
+    const field = new Float32Array(N);
+    const inkRidgeField = new Float32Array(N);
+
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x;
+        if (alpha[i] < 40) {
+          field[i] = -50;
+          continue;
+        }
+        const bgLevel = getLocalBgLevel(x, y, winRad);
+        const cut = bgLevel - localMargin;
+        const diff = cut - smooth[i];
+        field[i] = diff;
+        if (diff > 0) bin[i] = 1;
+        inkRidgeField[i] = Math.max(0, Math.min(1, (bgLevel - smooth[i]) / Math.max(18, localMargin * 2.2)));
+      }
+    }
+
+    // Bridge single isolated 1px pinholes without bridging genuine parallel strokes
+    for (let y = 1; y < h - 1; y++) {
+      for (let x = 1; x < w - 1; x++) {
+        const i = y * w + x;
+        if (!bin[i]) {
+          if ((bin[i - 1] && bin[i + 1]) && (bin[i - w] && bin[i + w])) bin[i] = 1;
+        }
+      }
+    }
+
     const outLines = [];
     const outQuads = [];
+    const solidMask = new Uint8Array(N);
 
-    function emitWorldPolyline(worldPts) {
+    function emitWorldPolyline(worldPts, closed = false, pixelPtsForEdt = null, edt = null) {
       if (worldPts.length < 2) return;
-      if (strokeOutput === 'quadRibbon') {
+      if (strokeOutput === 'variableInk' && edt && pixelPtsForEdt) {
+        const halfWidths = pixelPtsForEdt.map((p) => {
+          const ix = Math.max(0, Math.min(w - 1, Math.round(p.x - 0.5)));
+          const iy = Math.max(0, Math.min(h - 1, Math.round(p.y - 0.5)));
+          const rPx = Math.max(0.55, edt[iy * w + ix] - 0.45);
+          return Math.max((state.options.brushWidth || 0.004) * 0.2, rPx * pxWorldSize);
+        });
+        const quads = buildMiterRibbonQuads(worldPts, halfWidths, { closed });
+        for (const q of quads) outQuads.push(q);
+      } else if (strokeOutput === 'quadRibbon') {
         const halfW = (state.options.brushWidth || 0.004) / 2;
-        for (let i = 0; i < worldPts.length - 1; i++) {
-          const a = worldPts[i], b = worldPts[i + 1];
-          const dx = b.x - a.x, dy = b.y - a.y;
-          const len = Math.hypot(dx, dy);
-          if (len < 1e-6) continue;
-          const nx = (-dy / len) * halfW, ny = (dx / len) * halfW;
-          outQuads.push({
-            tl: { x: a.x + nx, y: a.y + ny },
-            tr: { x: b.x + nx, y: b.y + ny },
-            br: { x: b.x - nx, y: b.y - ny },
-            bl: { x: a.x - nx, y: a.y - ny }
-          });
-        }
+        const quads = buildMiterRibbonQuads(worldPts, halfW, { closed });
+        for (const q of quads) outQuads.push(q);
       } else {
         for (let i = 0; i < worldPts.length - 1; i++) {
           const a = worldPts[i], b = worldPts[i + 1];
           if (Math.hypot(b.x - a.x, b.y - a.y) < 1e-6) continue;
           outLines.push({ x1: a.x, y1: a.y, x2: b.x, y2: b.y });
         }
+        if (closed && worldPts.length >= 3) {
+          const a = worldPts[worldPts.length - 1], b = worldPts[0];
+          if (Math.hypot(b.x - a.x, b.y - a.y) >= 1e-6) {
+            outLines.push({ x1: a.x, y1: a.y, x2: b.x, y2: b.y });
+          }
+        }
       }
+    }
+
+    function buildDebugMaskCanvas(thinBin) {
+      if (previewStyle !== 'mask') return null;
+      const mc = document.createElement('canvas');
+      mc.width = w;
+      mc.height = h;
+      const mctx = mc.getContext('2d');
+      const md = mctx.createImageData(w, h);
+      const d = md.data;
+      for (let i = 0; i < N; i++) {
+        const p = i * 4;
+        if (solidMask[i]) {
+          d[p] = 255; d[p + 1] = 175; d[p + 2] = 40; d[p + 3] = 155;
+        } else if (thinBin[i]) {
+          d[p] = 255; d[p + 1] = 60; d[p + 2] = 150; d[p + 3] = 135;
+        }
+      }
+      mctx.putImageData(md, 0, 0);
+      return mc;
     }
 
     // -----------------------------------------------------------------------
     // MODE A: Sub-Pixel Marching Squares Contour Vectorizer ('marching')
     // -----------------------------------------------------------------------
     if (mode === 'marching') {
-      const field = new Float32Array(N);
-      const winRad = Math.max(12, Math.round(Math.min(w, h) / 20));
-      const localMargin = Math.max(4, 68 * Math.pow(1 - sens / 100, 1.35));
+      const contours = extractMarchingContours(field, w, h);
+      const closedLoops = [];
+      const openChains = [];
 
-      for (let y = 0; y < h; y++) {
-        for (let x = 0; x < w; x++) {
-          const i = y * w + x;
-          if (alpha[i] < 40) {
-            field[i] = -50;
-            continue;
-          }
-          const bgLevel = getLocalBgLevel(x, y, winRad);
-          const cut = bgLevel - localMargin;
-          field[i] = cut - smooth[i];
+      for (const ch of contours) {
+        if (ch.pts.length < Math.max(2, minChainLen)) continue;
+        const { pts: sm, corners } = smoothPolylineTaubin(ch.pts, 3, { closed: ch.closed });
+        const simp = piecewiseRdpSimplify(sm, corners, simplifyPx, ch.closed);
+        if (ch.closed && simp.length >= 3) {
+          closedLoops.push(simp);
+        } else if (simp.length >= 2) {
+          openChains.push({ pts: simp, closed: false });
         }
       }
 
-      const table = [
-        [], [[3, 2]], [[2, 1]], [[3, 1]],
-        [[0, 1]], [[0, 3], [2, 1]], [[0, 2]], [[3, 0]],
-        [[3, 0]], [[0, 2]], [[0, 1], [3, 2]], [[0, 1]],
-        [[3, 1]], [[2, 1]], [[3, 2]], []
-      ];
-
-      const adj = new Map();
-      const ptPool = [];
-      const keyToId = new Map();
-
-      function getVertexId(px, py) {
-        const k = `${Math.round(px * 50)},${Math.round(py * 50)}`;
-        let id = keyToId.get(k);
-        if (id === undefined) {
-          id = ptPool.length;
-          ptPool.push({ x: px, y: py });
-          keyToId.set(k, id);
-          adj.set(id, []);
-        }
-        return id;
-      }
-
-      function interp(x1, y1, v1, x2, y2, v2) {
-        const denom = v1 - v2;
-        const t = Math.abs(denom) < 1e-5 ? 0.5 : Math.max(0, Math.min(1, v1 / denom));
-        return { x: x1 + (x2 - x1) * t, y: y1 + (y2 - y1) * t };
-      }
-
-      const rawSegs = [];
-      for (let y = 0; y < h - 1; y++) {
-        for (let x = 0; x < w - 1; x++) {
-          const i = y * w + x;
-          const v0 = field[i], v1 = field[i + 1], v2 = field[i + w + 1], v3 = field[i + w];
-          const idx = (v0 > 0 ? 8 : 0) | (v1 > 0 ? 4 : 0) | (v2 > 0 ? 2 : 0) | (v3 > 0 ? 1 : 0);
-          const pairs = table[idx];
-          if (!pairs || pairs.length === 0) continue;
-
-          const edgePt = (e) => {
-            if (e === 0) return interp(x, y, v0, x + 1, y, v1);
-            if (e === 1) return interp(x + 1, y, v1, x + 1, y + 1, v2);
-            if (e === 2) return interp(x, y + 1, v3, x + 1, y + 1, v2);
-            return interp(x, y, v0, x, y + 1, v3);
-          };
-
-          for (const [eA, eB] of pairs) {
-            const pA = edgePt(eA);
-            const pB = edgePt(eB);
-            const u = getVertexId(pA.x, pA.y);
-            const v = getVertexId(pB.x, pB.y);
-            if (u !== v) {
-              const segId = rawSegs.length;
-              rawSegs.push({ u, v, used: false });
-              adj.get(u).push({ to: v, segId });
-              adj.get(v).push({ to: u, segId });
-            }
+      if (solidStyle === 'fill' && closedLoops.length > 0) {
+        const outers = nestClosedContoursWithHoles(closedLoops);
+        for (const item of outers) {
+          const outerWorld = item.pts.map((p) => pixelToWorld(p.x, p.y));
+          const holesWorld = item.holes.map((hPts) => hPts.map((p) => pixelToWorld(p.x, p.y)));
+          const bridged = bridgeHolesIntoOuter(outerWorld, holesWorld);
+          const mergedQuads = triangulatePolygonToQuads(bridged);
+          for (const q of mergedQuads) {
+            outQuads.push({ tl: q[0], tr: q[1], br: q[2], bl: q[3] });
           }
         }
-      }
-
-      for (let s = 0; s < rawSegs.length; s++) {
-        if (rawSegs[s].used) continue;
-        rawSegs[s].used = true;
-        const forward = [ptPool[rawSegs[s].v]];
-        const backward = [ptPool[rawSegs[s].u]];
-
-        let curr = rawSegs[s].v;
-        while (true) {
-          const list = adj.get(curr) || [];
-          const nextEdge = list.find((e) => !rawSegs[e.segId].used);
-          if (!nextEdge) break;
-          rawSegs[nextEdge.segId].used = true;
-          curr = nextEdge.to;
-          forward.push(ptPool[curr]);
+        for (const oc of openChains) {
+          emitWorldPolyline(oc.pts.map((p) => pixelToWorld(p.x, p.y)), false);
         }
-
-        curr = rawSegs[s].u;
-        while (true) {
-          const list = adj.get(curr) || [];
-          const nextEdge = list.find((e) => !rawSegs[e.segId].used);
-          if (!nextEdge) break;
-          rawSegs[nextEdge.segId].used = true;
-          curr = nextEdge.to;
-          backward.push(ptPool[curr]);
+      } else {
+        for (const cl of closedLoops) {
+          const wp = cl.map((p) => pixelToWorld(p.x, p.y));
+          emitWorldPolyline(wp, true);
         }
-
-        backward.reverse();
-        const chain = backward.concat(forward);
-        if (chain.length >= Math.max(2, minChainLen)) {
-          const smoothed = smoothPixelChainSubpixel(chain, 1);
-          const simp = rdpSimplify(smoothed, simplifyPx);
-          emitWorldPolyline(simp.map((p) => pixelToWorld(p.x, p.y)));
+        for (const oc of openChains) {
+          emitWorldPolyline(oc.pts.map((p) => pixelToWorld(p.x, p.y)), false);
         }
       }
 
-      return { lines: outLines, quads: outQuads };
+      return { lines: outLines, quads: outQuads, maskCanvas: buildDebugMaskCanvas(bin) };
     }
 
     // -----------------------------------------------------------------------
-    // MODE B, C, D: Smart Line Art (Centerline + Solid Shape Outer Borders) / Canny / Hybrid
+    // MODE B & D: Exact EDT + Topology Graph Centerline ('centerline' & 'hybrid')
+    // MODE C: Canny + Skeleton Topology Graph ('canny')
     // -----------------------------------------------------------------------
-    const edges = new Uint8Array(N);
+    const edt = computeExactEDT(bin, w, h);
+    let skeletonSource = bin;
 
-    if (mode === 'centerline') {
-      // 1. Background-Envelope Thresholding (never indents near or inside dark eyes!)
-      const bin = new Uint8Array(N);
-      const winRad = Math.max(12, Math.round(Math.min(w, h) / 20));
-      const localMargin = Math.max(4, 68 * Math.pow(1 - sens / 100, 1.35));
-
-      for (let y = 1; y < h - 1; y++) {
-        for (let x = 1; x < w - 1; x++) {
-          const i = y * w + x;
-          if (alpha[i] < 35) continue;
-          const bgLevel = getLocalBgLevel(x, y, winRad);
-          if (smooth[i] < bgLevel - localMargin) {
-            bin[i] = 1;
-          }
-        }
-      }
-
-      // Close 1-pixel micro-gaps
-      for (let y = 1; y < h - 1; y++) {
-        for (let x = 1; x < w - 1; x++) {
-          const i = y * w + x;
-          if (!bin[i]) {
-            if ((bin[i - 1] && bin[i + 1]) || (bin[i - w] && bin[i + w])) bin[i] = 1;
-          }
-        }
-      }
-
-      // 2. Chamfer Distance Transform on `bin` to distinguish Thin Strokes vs. Solid Filled Shapes (like dark eyes!)
-      const dist = new Uint16Array(N);
-      for (let y = 1; y < h - 1; y++) {
-        for (let x = 1; x < w - 1; x++) {
-          const i = y * w + x;
-          if (!bin[i]) continue;
-          const dTop = dist[i - w], dLeft = dist[i - 1];
-          dist[i] = (dTop < dLeft ? dTop : dLeft) + 1;
-        }
-      }
-      for (let y = h - 2; y >= 1; y--) {
-        for (let x = w - 2; x >= 1; x--) {
-          const i = y * w + x;
-          if (!bin[i]) continue;
-          const dBot = dist[i + w] + 1;
-          const dRight = dist[i + 1] + 1;
-          let m = dist[i];
-          if (dBot < m) m = dBot;
-          if (dRight < m) m = dRight;
-          dist[i] = m;
-        }
-      }
-
-      // Separable 2-pass Max Filter (radius = 6) on `dist` to identify pixels belonging to thick filled shapes
-      const strokeHalfLimit = Math.max(4, Math.round(Math.min(w, h) / 110)); // ~5px at 640px res
-      const rowMax = new Uint16Array(N);
-      const localMaxDist = new Uint16Array(N);
-      const mRad = strokeHalfLimit + 2;
-
-      for (let y = 1; y < h - 1; y++) {
-        const rowOff = y * w;
-        for (let x = 1; x < w - 1; x++) {
-          let mx = 0;
-          const x0 = Math.max(0, x - mRad), x1 = Math.min(w - 1, x + mRad);
-          for (let k = x0; k <= x1; k++) {
-            const v = dist[rowOff + k];
-            if (v > mx) mx = v;
-          }
-          rowMax[rowOff + x] = mx;
-        }
-      }
-      for (let y = 1; y < h - 1; y++) {
-        const y0 = Math.max(0, y - mRad), y1 = Math.min(h - 1, y + mRad);
-        for (let x = 1; x < w - 1; x++) {
-          let mx = 0;
-          for (let k = y0; k <= y1; k++) {
-            const v = rowMax[k * w + x];
-            if (v > mx) mx = v;
-          }
-          localMaxDist[y * w + x] = mx;
-        }
-      }
-
-      // For thick filled shapes (localMaxDist > strokeHalfLimit, e.g., solid black eye pupils):
-      // Pin their exact outer border (dist === 1) and hollow out their deep interior (dist >= 2)
-      // so the trace follows the EXACT outer border of the eye with zero indentation!
-      const pinnedBorder = new Uint8Array(N);
+    if (mode === 'hybrid') {
+      // Exact circular morphological opening separates genuine solid shaded shapes from strokes & X-crossings
+      const coreBin = new Uint8Array(N);
       for (let i = 0; i < N; i++) {
-        if (!bin[i]) continue;
-        if (localMaxDist[i] > strokeHalfLimit) {
-          if (dist[i] === 1) {
-            pinnedBorder[i] = 1;
-          } else {
-            bin[i] = 0;
-          }
-        }
+        if (bin[i] && edt[i] >= solidRadPx) coreBin[i] = 1;
       }
 
-      // 3. Full Zhang-Suen Thinning on line strokes (never erodes pinnedBorder outer contours of solid shapes!)
-      const toClear = [];
-      for (let iter = 0; iter < 64; iter++) {
-        let changed = false;
-        for (let step = 0; step < 2; step++) {
-          toClear.length = 0;
-          for (let y = 1; y < h - 1; y++) {
-            for (let x = 1; x < w - 1; x++) {
-              const i = y * w + x;
-              if (!bin[i] || pinnedBorder[i]) continue;
-              const p2 = bin[i - w], p3 = bin[i - w + 1], p4 = bin[i + 1], p5 = bin[i + w + 1];
-              const p6 = bin[i + w], p7 = bin[i + w - 1], p8 = bin[i - 1], p9 = bin[i - w - 1];
-              const B = p2 + p3 + p4 + p5 + p6 + p7 + p8 + p9;
-              if (B < 2 || B > 6) continue;
-              const A =
-                (!p2 && p3 ? 1 : 0) + (!p3 && p4 ? 1 : 0) + (!p4 && p5 ? 1 : 0) + (!p5 && p6 ? 1 : 0) +
-                (!p6 && p7 ? 1 : 0) + (!p7 && p8 ? 1 : 0) + (!p8 && p9 ? 1 : 0) + (!p9 && p2 ? 1 : 0);
-              if (A !== 1) continue;
-              if (step === 0) {
-                if (p2 * p4 * p6 !== 0 || p4 * p6 * p8 !== 0) continue;
-              } else {
-                if (p2 * p4 * p8 !== 0 || p2 * p6 * p8 !== 0) continue;
-              }
-              toClear.push(i);
+      // Discard tiny isolated crossing-diamond core fragments
+      const visitedCore = new Uint8Array(N);
+      const minCoreArea = Math.max(8, Math.round(solidRadPx * solidRadPx * 0.4));
+      const cDirs = [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, -1], [-1, 1], [1, 1]];
+      for (let i = 0; i < N; i++) {
+        if (!coreBin[i] || visitedCore[i]) continue;
+        const comp = [];
+        const q = [i];
+        visitedCore[i] = 1;
+        while (q.length > 0) {
+          const c = q.pop();
+          comp.push(c);
+          const cx = c % w, cy = (c / w) | 0;
+          for (let k = 0; k < 8; k++) {
+            const nx = cx + cDirs[k][0], ny = cy + cDirs[k][1];
+            if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
+            const ni = ny * w + nx;
+            if (coreBin[ni] && !visitedCore[ni]) {
+              visitedCore[ni] = 1;
+              q.push(ni);
             }
           }
-          if (toClear.length > 0) {
-            changed = true;
-            for (let k = 0; k < toClear.length; k++) bin[toClear[k]] = 0;
-          }
         }
-        if (!changed) break;
+        if (comp.length < minCoreArea) {
+          for (const px of comp) coreBin[px] = 0;
+        }
       }
 
-      edges.set(bin);
-    } else {
-      // Canny Edge Detection ('canny' and 'hybrid')
+      // Reconstruct exact opened solid regions via inverse EDT in O(w*h) while preserving bright interior holes!
+      const invCore = new Uint8Array(N);
+      for (let i = 0; i < N; i++) invCore[i] = coreBin[i] ? 0 : 1;
+      const distFromCore = computeExactEDT(invCore, w, h);
+
+      const strokeThinMask = new Uint8Array(N);
+      const solidField = new Float32Array(N);
+
+      for (let i = 0; i < N; i++) {
+        const isOpened = bin[i] && distFromCore[i] <= solidRadPx + 1.2;
+        if (isOpened) {
+          solidMask[i] = 1;
+        } else if (bin[i]) {
+          strokeThinMask[i] = 1;
+        }
+        solidField[i] = isOpened ? Math.max(0.5, field[i]) : -Math.max(0.5, -field[i]);
+      }
+
+      // Extend thin strokes 1px into solid shapes ONLY at stroke-attachment ports (avoids double rings on isolated eyes!)
+      for (let y = 1; y < h - 1; y++) {
+        for (let x = 1; x < w - 1; x++) {
+          const i = y * w + x;
+          if (!solidMask[i]) continue;
+          for (let k = 0; k < 8; k++) {
+            const nx = x + cDirs[k][0], ny = y + cDirs[k][1];
+            const ni = ny * w + nx;
+            if (bin[ni] && !solidMask[ni]) {
+              strokeThinMask[i] = 1;
+              break;
+            }
+          }
+        }
+      }
+
+      // Extract & emit hole-preserved solid filled regions
+      const solidContours = extractMarchingContours(solidField, w, h);
+      const solidClosed = [];
+      for (const sc of solidContours) {
+        if (sc.pts.length < Math.max(4, minChainLen)) continue;
+        const { pts: sm, corners } = smoothPolylineTaubin(sc.pts, 3, { closed: true });
+        const simp = piecewiseRdpSimplify(sm, corners, Math.max(0.45, simplifyPx), true);
+        if (simp.length >= 3) solidClosed.push(simp);
+      }
+
+      if (solidClosed.length > 0) {
+        if (solidStyle === 'fill') {
+          const outers = nestClosedContoursWithHoles(solidClosed);
+          for (const item of outers) {
+            const outerWorld = item.pts.map((p) => pixelToWorld(p.x, p.y));
+            const holesWorld = item.holes.map((hPts) => hPts.map((p) => pixelToWorld(p.x, p.y)));
+            const bridged = bridgeHolesIntoOuter(outerWorld, holesWorld);
+            const mergedQuads = triangulatePolygonToQuads(bridged);
+            for (const q of mergedQuads) {
+              outQuads.push({ tl: q[0], tr: q[1], br: q[2], bl: q[3] });
+            }
+          }
+        } else {
+          for (const scPts of solidClosed) {
+            emitWorldPolyline(scPts.map((p) => pixelToWorld(p.x, p.y)), true);
+          }
+        }
+      }
+
+      skeletonSource = strokeThinMask;
+    }
+
+    let edges;
+    if (mode === 'canny') {
+      edges = new Uint8Array(N);
       const mag = new Float32Array(N);
       const dir = new Uint8Array(N);
-
       for (let y = 1; y < h - 1; y++) {
         for (let x = 1; x < w - 1; x++) {
           const i = y * w + x;
@@ -4954,12 +6527,9 @@
           const gyL = -smooth[i - w - 1] - 2 * smooth[i - w] - smooth[i - w + 1] + smooth[i + w - 1] + 2 * smooth[i + w] + smooth[i + w + 1];
           const gxA = -alpha[i - w - 1] + alpha[i - w + 1] - 2 * alpha[i - 1] + 2 * alpha[i + 1] - alpha[i + w - 1] + alpha[i + w + 1];
           const gyA = -alpha[i - w - 1] - 2 * alpha[i - w] - alpha[i - w + 1] + alpha[i + w - 1] + 2 * alpha[i + w] + alpha[i + w + 1];
-
           const mL = Math.hypot(gxL, gyL) * 0.25;
           const mA = Math.hypot(gxA, gyA) * 0.25;
-          const m = Math.max(mL, mA);
-          mag[i] = m;
-
+          mag[i] = Math.max(mL, mA);
           const gx = mL >= mA ? gxL : gxA;
           const gy = mL >= mA ? gyL : gyA;
           let ang = (Math.atan2(gy, gx) * 180) / Math.PI;
@@ -4973,7 +6543,6 @@
 
       const highThresh = Math.max(1.5, 140 * Math.pow(1 - sens / 100, 1.8));
       const lowThresh = highThresh * 0.38;
-
       const nms = new Uint8Array(N);
       const strongQueue = [];
       for (let y = 1; y < h - 1; y++) {
@@ -4982,12 +6551,8 @@
           const m = mag[i];
           if (m < lowThresh) continue;
           const d = dir[i];
-          let n1 = 0, n2 = 0;
-          if (d === 0) { n1 = mag[i - 1]; n2 = mag[i + 1]; }
-          else if (d === 1) { n1 = mag[i - w + 1]; n2 = mag[i + w - 1]; }
-          else if (d === 2) { n1 = mag[i - w]; n2 = mag[i + w]; }
-          else { n1 = mag[i - w - 1]; n2 = mag[i + w + 1]; }
-
+          const n1 = d === 0 ? mag[i - 1] : d === 1 ? mag[i - w + 1] : d === 2 ? mag[i - w] : mag[i - w - 1];
+          const n2 = d === 0 ? mag[i + 1] : d === 1 ? mag[i + w - 1] : d === 2 ? mag[i + w] : mag[i + w + 1];
           if (m >= n1 && m >= n2) {
             if (m >= highThresh) {
               nms[i] = 2;
@@ -4998,7 +6563,6 @@
           }
         }
       }
-
       const neighbors = [-w - 1, -w, -w + 1, -1, 1, w - 1, w, w + 1];
       while (strongQueue.length > 0) {
         const curr = strongQueue.pop();
@@ -5011,162 +6575,129 @@
           }
         }
       }
+    } else {
+      edges = thinMaskZhangSuen(skeletonSource, w, h);
+    }
 
-      if (mode === 'hybrid') {
-        const winRad = Math.max(12, Math.round(Math.min(w, h) / 20));
-        const localBias = Math.max(5, 58 * Math.pow(1 - sens / 100, 1.35));
-        const rowStep = Math.max(2, Math.round(h / 150));
-        for (let y = 1; y < h - 1; y += rowStep) {
-          let runStart = -1;
-          for (let x = 1; x < w; x++) {
-            const i = y * w + x;
-            const bgLevel = x < w - 1 ? getLocalBgLevel(x, y, winRad) : 255;
-            const isDark = x < w - 1 && alpha[i] >= 40 && smooth[i] < bgLevel - localBias;
-            if (isDark && runStart === -1) {
-              runStart = x;
-            } else if (!isDark && runStart !== -1) {
-              if (x - runStart >= 2) {
-                const tl = pixelToWorld(runStart, y);
-                const tr = pixelToWorld(x, y);
-                const br = pixelToWorld(x, y + rowStep * 0.95);
-                const bl = pixelToWorld(runStart, y + rowStep * 0.95);
-                outQuads.push({ tl, tr, br, bl });
-              }
-              runStart = -1;
+    // Prune short whisker spurs cleanly while preserving junctions & crossings
+    pruneSkeletonSpurs(edges, w, h, spurLimit);
+
+    // Extract topology graph with clustered Junction Super-Nodes & tangent X-crossing merges
+    const chains = extractSkeletonGraphAndMerge(edges, w, h);
+
+    // Smooth with Taubin non-shrinking filter + sub-pixel darkness ridge snapping
+    const preSimpChains = [];
+    for (const ch of chains) {
+      if (ch.pts.length < Math.max(2, minChainLen)) continue;
+
+      const ptsWithEdt = ch.pts.map((p) => {
+        const ix = Math.max(0, Math.min(w - 1, Math.round(p.x - 0.5)));
+        const iy = Math.max(0, Math.min(h - 1, Math.round(p.y - 0.5)));
+        return { x: p.x, y: p.y, halfWidthPx: Math.max(0.5, edt[iy * w + ix] - 0.45) };
+      });
+
+      const { pts: taubinPts, corners } = smoothPolylineTaubin(ptsWithEdt, 4, { closed: ch.closed });
+      const ridgePts = mode === 'canny'
+        ? taubinPts
+        : snapChainToDarkRidge(taubinPts, inkRidgeField, w, h, corners, ch.closed);
+      if (ridgePts.length >= 2) {
+        preSimpChains.push({
+          pts: ridgePts,
+          corners,
+          closed: ch.closed,
+          startJunction: ch.startJunction,
+          endJunction: ch.endJunction
+        });
+      }
+    }
+
+    // Snap any unmerged T-junction / Y-junction stem endpoint cleanly onto the closest smoothed crossing segment
+    if (preSimpChains.length > 1) {
+      const snapMaxPx = 3.0;
+      const snapEndToClosestChain = (chainIdx, ptIdx) => {
+        const pt = preSimpChains[chainIdx].pts[ptIdx];
+        let bestDist = snapMaxPx;
+        let bestX = pt.x, bestY = pt.y;
+        let found = false;
+        for (let oi = 0; oi < preSimpChains.length; oi++) {
+          if (oi === chainIdx) continue;
+          const opts = preSimpChains[oi].pts;
+          const segMax = preSimpChains[oi].closed ? opts.length : opts.length - 1;
+          for (let s = 0; s < segMax; s++) {
+            const a = opts[s], b = opts[(s + 1) % opts.length];
+            const dx = b.x - a.x, dy = b.y - a.y;
+            const lenSq = dx * dx + dy * dy;
+            if (lenSq < 1e-8) continue;
+            const t = Math.max(0, Math.min(1, ((pt.x - a.x) * dx + (pt.y - a.y) * dy) / lenSq));
+            const px = a.x + dx * t, py = a.y + dy * t;
+            const d = Math.hypot(pt.x - px, pt.y - py);
+            if (d < bestDist) {
+              bestDist = d;
+              bestX = px;
+              bestY = py;
+              found = true;
             }
           }
         }
+        if (found) {
+          pt.x = bestX;
+          pt.y = bestY;
+        }
+      };
+
+      for (let ci = 0; ci < preSimpChains.length; ci++) {
+        const item = preSimpChains[ci];
+        if (item.closed || item.pts.length < 2) continue;
+        if (item.startJunction >= 0) snapEndToClosestChain(ci, 0);
+        if (item.endJunction >= 0) snapEndToClosestChain(ci, item.pts.length - 1);
       }
     }
 
-    // -----------------------------------------------------------------------
-    // 2x2 L-Staircase Pruning (removes redundant corner pixels on diagonals)
-    // -----------------------------------------------------------------------
-    for (let y = 1; y < h - 1; y++) {
-      for (let x = 1; x < w - 1; x++) {
-        const i = y * w + x;
-        if (!edges[i]) continue;
-        const p2 = edges[i - w], p4 = edges[i + 1], p6 = edges[i + w], p8 = edges[i - 1];
-        const p3 = edges[i - w + 1], p5 = edges[i + w + 1], p7 = edges[i + w - 1], p9 = edges[i - w - 1];
-        if ((p2 && p4 && !p7 && !p8 && !p6) ||
-            (p4 && p6 && !p9 && !p2 && !p8) ||
-            (p6 && p8 && !p3 && !p2 && !p4) ||
-            (p8 && p2 && !p5 && !p4 && !p6)) {
-          edges[i] = 0;
-        }
+    const processedChains = [];
+    for (const item of preSimpChains) {
+      const simpPts = piecewiseRdpSimplify(item.pts, item.corners, simplifyPx, item.closed);
+      if (simpPts.length >= 2) {
+        processedChains.push({ pts: simpPts, closed: item.closed });
       }
     }
 
-    // -----------------------------------------------------------------------
-    // Endpoint-First & Tangent-Guided Graph Chainer
-    // -----------------------------------------------------------------------
-    const dirs = [
-      [1, 0], [0, 1], [-1, 0], [0, -1], // Cardinals first
-      [1, 1], [-1, 1], [-1, -1], [1, -1] // Diagonals second
-    ];
-
-    const degree = new Uint8Array(N);
-    const startCandidates = [];
-    for (let y = 1; y < h - 1; y++) {
-      for (let x = 1; x < w - 1; x++) {
-        const i = y * w + x;
-        if (!edges[i]) continue;
-        let deg = 0;
-        for (const [dx, dy] of dirs) {
-          if (edges[(y + dy) * w + (x + dx)]) deg++;
-        }
-        degree[i] = deg;
-        if (deg === 1 || deg >= 3) {
-          startCandidates.push({ x, y, deg });
-        }
+    // Optional post-trace endpoint gap bridging (connects tiny 1–3.5px hairline breaks between opposing endpoints)
+    if (weldGaps && processedChains.length > 1) {
+      const gapThresh = 3.5;
+      const openEnds = [];
+      for (let ci = 0; ci < processedChains.length; ci++) {
+        const c = processedChains[ci];
+        if (c.closed || c.pts.length < 2) continue;
+        openEnds.push({ ci, atStart: true, pt: c.pts[0] });
+        openEnds.push({ ci, atStart: false, pt: c.pts[c.pts.length - 1] });
       }
-    }
-    // Sort so degree-1 endpoints trace before degree-3 junctions
-    startCandidates.sort((a, b) => a.deg - b.deg);
-
-    const visited = new Uint8Array(N);
-
-    function traceChainFrom(startX, startY) {
-      const chain = [];
-      let cx = startX, cy = startY;
-      let dirX = 0, dirY = 0;
-
-      while (true) {
-        const ci = cy * w + cx;
-        visited[ci] = 1;
-        chain.push({ x: cx, y: cy });
-
-        let bestNx = -1, bestNy = -1;
-        let bestScore = -Infinity;
-
-        for (const [dx, dy] of dirs) {
-          const nx = cx + dx, ny = cy + dy;
-          if (nx <= 0 || nx >= w - 1 || ny <= 0 || ny >= h - 1) continue;
-          const ni = ny * w + nx;
-          if (!edges[ni] || visited[ni]) continue;
-
-          const stepLen = Math.hypot(dx, dy);
-          const ndx = dx / stepLen, ndy = dy / stepLen;
-          // Prefer continuing straight along current tangent, and slight preference for orthogonal steps
-          const align = (dirX === 0 && dirY === 0) ? 0.5 : (dirX * ndx + dirY * ndy);
-          const score = align - (stepLen > 1.1 ? 0.08 : 0);
-          if (score > bestScore) {
-            bestScore = score;
-            bestNx = nx;
-            bestNy = ny;
-          }
-        }
-
-        if (bestNx === -1) break;
-        const stepDx = bestNx - cx, stepDy = bestNy - cy;
-        const sl = Math.hypot(stepDx, stepDy) || 1;
-        dirX = dirX * 0.45 + (stepDx / sl) * 0.55;
-        dirY = dirY * 0.45 + (stepDy / sl) * 0.55;
-        const dl = Math.hypot(dirX, dirY) || 1;
-        dirX /= dl; dirY /= dl;
-        cx = bestNx;
-        cy = bestNy;
-      }
-
-      // Snap chain endpoints to neighboring junction pixels if adjacent so T-junctions connect cleanly
-      if (chain.length >= 2) {
-        const tail = chain[chain.length - 1];
-        const prev = chain[chain.length - 2];
-        for (const [dx, dy] of dirs) {
-          const nx = tail.x + dx, ny = tail.y + dy;
-          const ni = ny * w + nx;
-          if (edges[ni] && degree[ni] >= 3 && !(nx === prev.x && ny === prev.y)) {
-            chain.push({ x: nx, y: ny });
-            break;
+      for (let a = 0; a < openEnds.length; a++) {
+        for (let b = a + 1; b < openEnds.length; b++) {
+          const ea = openEnds[a], eb = openEnds[b];
+          if (ea.ci === eb.ci) continue;
+          const d = Math.hypot(ea.pt.x - eb.pt.x, ea.pt.y - eb.pt.y);
+          if (d > 1e-4 && d <= gapThresh) {
+            const mx = (ea.pt.x + eb.pt.x) * 0.5;
+            const my = (ea.pt.y + eb.pt.y) * 0.5;
+            const pa = processedChains[ea.ci].pts;
+            const pb = processedChains[eb.ci].pts;
+            if (ea.atStart) { pa[0].x = mx; pa[0].y = my; } else { pa[pa.length - 1].x = mx; pa[pa.length - 1].y = my; }
+            if (eb.atStart) { pb[0].x = mx; pb[0].y = my; } else { pb[pb.length - 1].x = mx; pb[pb.length - 1].y = my; }
           }
         }
       }
-
-      if (chain.length >= Math.max(2, minChainLen)) {
-        const smoothed = smoothPixelChainSubpixel(chain, 2);
-        const simp = rdpSimplify(smoothed, simplifyPx);
-        emitWorldPolyline(simp.map((p) => pixelToWorld(p.x, p.y)));
-      }
     }
 
-    // 1. Trace open strokes from endpoints & junctions first
-    for (const c of startCandidates) {
-      if (!visited[c.y * w + c.x]) {
-        traceChainFrom(c.x, c.y);
-      }
+    for (const ch of processedChains) {
+      const worldPts = ch.pts.map((p) => pixelToWorld(p.x, p.y));
+      emitWorldPolyline(worldPts, ch.closed, ch.pts, edt);
     }
 
-    // 2. Trace remaining closed loops (circles, ovals, closed contours)
-    for (let y = 1; y < h - 1; y++) {
-      for (let x = 1; x < w - 1; x++) {
-        const i = y * w + x;
-        if (edges[i] && !visited[i] && degree[i] > 0) {
-          traceChainFrom(x, y);
-        }
-      }
-    }
-
-    return { lines: outLines, quads: outQuads };
+    return {
+      lines: outLines,
+      quads: outQuads,
+      maskCanvas: buildDebugMaskCanvas(skeletonSource)
+    };
   }
 
   function scheduleLiveTracePreview() {
@@ -5176,10 +6707,11 @@
       const res = computeImageVectorTrace();
       state.tracePreview.lines = res.lines;
       state.tracePreview.quads = res.quads;
+      state.tracePreview.maskCanvas = res.maskCanvas;
       const qTxt = res.quads.length > 0 ? ` + ${res.quads.length}Q` : '';
       $('tracePreviewStats').textContent = `${res.lines.length}L${qTxt}`;
       requestRender();
-    }, 40);
+    }, 36);
   }
 
   function commitAutoTraceToDocument() {
@@ -5259,7 +6791,294 @@
   }
 
   /**
-   * Generate a clean procedural lineart test drawing in memory so users can test Auto-Draw immediately.
+   * Direct SVG vector importer: flattens SVG shapes and compound paths directly using native DOM geometry APIs.
+   */
+  function importSvgFile(svgText, fileName = 'artwork.svg') {
+    const parser = new DOMParser();
+    const xml = parser.parseFromString(svgText, 'image/svg+xml');
+    const svgEl = xml.querySelector('svg');
+    if (!svgEl) {
+      showToast('Invalid SVG file', 'error');
+      return;
+    }
+
+    const ns = 'http://www.w3.org/2000/svg';
+    const host = document.createElement('div');
+    host.style.cssText = 'position:fixed;left:-99999px;top:-99999px;width:0;height:0;overflow:hidden;opacity:0;pointer-events:none;';
+    const cloned = document.importNode(svgEl, true);
+    host.appendChild(cloned);
+    document.body.appendChild(host);
+
+    const closedFillGroups = [];
+    const openPolylines = [];
+
+    try {
+      const vb = cloned.viewBox && cloned.viewBox.baseVal && cloned.viewBox.baseVal.width > 0
+        ? cloned.viewBox.baseVal
+        : null;
+      let bbox;
+      try { bbox = cloned.getBBox(); } catch (_) { bbox = null; }
+      const vbX = vb ? vb.x : (bbox && bbox.width > 0 ? bbox.x : 0);
+      const vbY = vb ? vb.y : (bbox && bbox.height > 0 ? bbox.y : 0);
+      const vbW = vb ? vb.width : (parseFloat(cloned.getAttribute('width')) || (bbox && bbox.width > 0 ? bbox.width : 100));
+      const vbH = vb ? vb.height : (parseFloat(cloned.getAttribute('height')) || (bbox && bbox.height > 0 ? bbox.height : 100));
+      const svgAspect = vbW / (vbH || 1);
+
+      const targetH = state.refImage.scale || 0.45;
+      const targetW = targetH * svgAspect;
+      const cx = state.refImage.x || 0;
+      const cy = state.refImage.y || 0;
+      const rotRad = ((state.refImage.rotation || 0) * Math.PI) / 180;
+      const cosR = Math.cos(rotRad), sinR = Math.sin(rotRad);
+      const svgRootCtm = cloned.getCTM();
+      const invRootCtm = svgRootCtm ? svgRootCtm.inverse() : null;
+
+      function svgPtToWorld(sx, sy) {
+        const lx = ((sx - vbX) / (vbW || 1) - 0.5) * targetW;
+        const ly = ((sy - vbY) / (vbH || 1) - 0.5) * targetH;
+        return {
+          x: cx + lx * cosR - ly * sinR,
+          y: cy + lx * sinR + ly * cosR
+        };
+      }
+
+      const simpWorldEps = Math.max(0.00018, ((parseFloat($('rngTraceSimplify')?.value) || 0.65) / 640) * Math.max(targetW, targetH));
+
+      // Split multi-M <path> d strings into single subpaths with absolute start coordinates
+      function splitPathSubpaths(dStr) {
+        const tokens = dStr.match(/[a-zA-Z]|[-+]?(?:\d*\.\d+|\d+\.?)(?:[eE][-+]?\d+)?/g);
+        if (!tokens) return [];
+        const subpaths = [];
+        let curD = '';
+        let x = 0, y = 0, sx0 = 0, sy0 = 0;
+        let cmd = '';
+        let i = 0;
+        const num = () => (i < tokens.length && !/^[a-zA-Z]$/.test(tokens[i]) ? parseFloat(tokens[i++]) : NaN);
+
+        while (i < tokens.length) {
+          if (/^[a-zA-Z]$/.test(tokens[i])) {
+            cmd = tokens[i++];
+            if (cmd === 'Z' || cmd === 'z') {
+              curD += ' Z';
+              x = sx0; y = sy0;
+              continue;
+            }
+          }
+          if (cmd === 'M' || cmd === 'm') {
+            const nx = num(), ny = num();
+            if (Number.isNaN(nx) || Number.isNaN(ny)) break;
+            x = cmd === 'm' ? x + nx : nx;
+            y = cmd === 'm' ? y + ny : ny;
+            sx0 = x; sy0 = y;
+            if (curD.trim()) subpaths.push(curD.trim());
+            curD = `M ${x} ${y}`;
+            cmd = cmd === 'm' ? 'l' : 'L';
+          } else if (cmd === 'L' || cmd === 'l') {
+            const nx = num(), ny = num();
+            if (Number.isNaN(nx) || Number.isNaN(ny)) break;
+            x = cmd === 'l' ? x + nx : nx;
+            y = cmd === 'l' ? y + ny : ny;
+            curD += ` L ${x} ${y}`;
+          } else if (cmd === 'H' || cmd === 'h') {
+            const nx = num();
+            if (Number.isNaN(nx)) break;
+            x = cmd === 'h' ? x + nx : nx;
+            curD += ` L ${x} ${y}`;
+          } else if (cmd === 'V' || cmd === 'v') {
+            const ny = num();
+            if (Number.isNaN(ny)) break;
+            y = cmd === 'v' ? y + ny : ny;
+            curD += ` L ${x} ${y}`;
+          } else if (cmd === 'C' || cmd === 'c') {
+            const a = num(), b = num(), c = num(), d = num(), e = num(), f = num();
+            if ([a, b, c, d, e, f].some(Number.isNaN)) break;
+            const rel = cmd === 'c';
+            curD += ` C ${rel ? x + a : a} ${rel ? y + b : b} ${rel ? x + c : c} ${rel ? y + d : d} ${rel ? x + e : e} ${rel ? y + f : f}`;
+            x = rel ? x + e : e; y = rel ? y + f : f;
+          } else if (cmd === 'S' || cmd === 's' || cmd === 'Q' || cmd === 'q') {
+            const a = num(), b = num(), c = num(), d = num();
+            if ([a, b, c, d].some(Number.isNaN)) break;
+            const rel = cmd === 's' || cmd === 'q';
+            const op = (cmd === 'S' || cmd === 's') ? 'S' : 'Q';
+            curD += ` ${op} ${rel ? x + a : a} ${rel ? y + b : b} ${rel ? x + c : c} ${rel ? y + d : d}`;
+            x = rel ? x + c : c; y = rel ? y + d : d;
+          } else if (cmd === 'T' || cmd === 't') {
+            const a = num(), b = num();
+            if ([a, b].some(Number.isNaN)) break;
+            x = cmd === 't' ? x + a : a; y = cmd === 't' ? y + b : b;
+            curD += ` T ${x} ${y}`;
+          } else if (cmd === 'A' || cmd === 'a') {
+            const rx = num(), ry = num(), rot = num(), la = num(), swp = num(), a = num(), b = num();
+            if ([rx, ry, rot, la, swp, a, b].some(Number.isNaN)) break;
+            const nx = cmd === 'a' ? x + a : a;
+            const ny = cmd === 'a' ? y + b : b;
+            curD += ` A ${rx} ${ry} ${rot} ${la} ${swp} ${nx} ${ny}`;
+            x = nx; y = ny;
+          } else {
+            break;
+          }
+        }
+        if (curD.trim()) subpaths.push(curD.trim());
+        return subpaths;
+      }
+
+      const shapes = cloned.querySelectorAll('path, circle, ellipse, rect, polygon, polyline, line');
+      for (const el of shapes) {
+        if (el.closest('defs, clipPath, mask, marker, pattern, symbol')) continue;
+        const cs = window.getComputedStyle(el);
+        if (cs.display === 'none' || cs.visibility === 'hidden') continue;
+
+        const fillVal = (el.getAttribute('fill') || cs.fill || '').trim().toLowerCase();
+        const strokeVal = (el.getAttribute('stroke') || cs.stroke || '').trim().toLowerCase();
+        const hasFill = fillVal !== 'none' && fillVal !== 'transparent';
+        const hasStroke = strokeVal !== '' && strokeVal !== 'none' && strokeVal !== 'transparent';
+
+        const ctm = el.getCTM();
+        const relMtx = ctm && invRootCtm ? invRootCtm.multiply(ctm) : ctm;
+        const transformPt = (p) => relMtx
+          ? { x: p.x * relMtx.a + p.y * relMtx.c + relMtx.e, y: p.x * relMtx.b + p.y * relMtx.d + relMtx.f }
+          : { x: p.x, y: p.y };
+
+        const sampleGeometryEl = (geomEl) => {
+          let totalLen = 0;
+          try { totalLen = geomEl.getTotalLength(); } catch (_) { return; }
+          if (!(totalLen > 0)) return;
+          const samplesCount = Math.max(8, Math.min(480, Math.ceil((totalLen / Math.max(vbW, vbH, 1)) * 420)));
+          const pts = [];
+          for (let s = 0; s <= samplesCount; s++) {
+            const pt = geomEl.getPointAtLength((s / samplesCount) * totalLen);
+            const tp = transformPt(pt);
+            pts.push(svgPtToWorld(tp.x, tp.y));
+          }
+          if (pts.length < 2) return;
+          const isClosed = Math.hypot(pts[0].x - pts[pts.length - 1].x, pts[0].y - pts[pts.length - 1].y) < 1e-4;
+          const { corners } = smoothPolylineTaubin(pts, 0, { closed: isClosed, cornerCos: 0.72 });
+          const simp = piecewiseRdpSimplify(pts, corners, simpWorldEps);
+          if (hasFill && !hasStroke && isClosed && simp.length >= 3) {
+            closedFillGroups.push(simp);
+          } else {
+            openPolylines.push({ pts: simp, closed: isClosed });
+          }
+        };
+
+        if (el.tagName.toLowerCase() === 'path') {
+          const dStr = el.getAttribute('d') || '';
+          const subs = splitPathSubpaths(dStr);
+          if (subs.length <= 1) {
+            sampleGeometryEl(el);
+          } else {
+            const fillSubLoops = [];
+            for (const sd of subs) {
+              const tmp = document.createElementNS(ns, 'path');
+              tmp.setAttribute('d', sd);
+              el.parentNode.appendChild(tmp);
+              let totalLen = 0;
+              try { totalLen = tmp.getTotalLength(); } catch (_) { totalLen = 0; }
+              if (totalLen > 0) {
+                const sc = Math.max(6, Math.min(420, Math.ceil((totalLen / Math.max(vbW, vbH, 1)) * 420)));
+                const pts = [];
+                for (let s = 0; s <= sc; s++) {
+                  const tp = transformPt(tmp.getPointAtLength((s / sc) * totalLen));
+                  pts.push(svgPtToWorld(tp.x, tp.y));
+                }
+                const isClosed = /z\s*$/i.test(sd) || Math.hypot(pts[0].x - pts[pts.length - 1].x, pts[0].y - pts[pts.length - 1].y) < 1e-4;
+                const { corners } = smoothPolylineTaubin(pts, 0, { closed: isClosed, cornerCos: 0.72 });
+                const simp = piecewiseRdpSimplify(pts, corners, simpWorldEps);
+                if (hasFill && !hasStroke && isClosed && simp.length >= 3) {
+                  fillSubLoops.push(simp);
+                } else if (simp.length >= 2) {
+                  openPolylines.push({ pts: simp, closed: isClosed });
+                }
+              }
+              tmp.remove();
+            }
+            for (const fl of fillSubLoops) closedFillGroups.push(fl);
+          }
+        } else {
+          sampleGeometryEl(el);
+        }
+      }
+    } finally {
+      host.remove();
+    }
+
+    if (openPolylines.length === 0 && closedFillGroups.length === 0) {
+      showToast(`No vector paths found inside ${fileName}`, 'warn');
+      return;
+    }
+
+    const targetLayer = $('selTraceLayer')?.value || 'draw';
+    const strokeOutput = $('selTraceOutput')?.value || 'lines';
+    const th = state.options.defaultThousandth;
+    const mv = state.options.defaultMoveRadial ? false : state.options.defaultMove;
+    const batchIds = new Set();
+
+    function pushWorldLine(a, b) {
+      if (Math.hypot(b.x - a.x, b.y - a.y) < 1e-6) return;
+      const id = BlkParser.nextId('line');
+      batchIds.add(id);
+      state.doc.lines.push({
+        id,
+        layer: targetLayer,
+        x1: fromCanvasUnit(a.x, th),
+        y1: fromCanvasUnit(a.y, th),
+        x2: fromCanvasUnit(b.x, th),
+        y2: fromCanvasUnit(b.y, th),
+        move: mv,
+        thousandth: th,
+        ...makeDefaultRadialFields((a.x + b.x) * 0.5, (a.y + b.y) * 0.5)
+      });
+    }
+
+    function pushWorldQuad(q) {
+      const id = BlkParser.nextId('quad');
+      batchIds.add(id);
+      state.doc.quads.push({
+        id,
+        layer: targetLayer,
+        tl: { x: fromCanvasUnit(q.tl.x, th), y: fromCanvasUnit(q.tl.y, th) },
+        tr: { x: fromCanvasUnit(q.tr.x, th), y: fromCanvasUnit(q.tr.y, th) },
+        br: { x: fromCanvasUnit(q.br.x, th), y: fromCanvasUnit(q.br.y, th) },
+        bl: { x: fromCanvasUnit(q.bl.x, th), y: fromCanvasUnit(q.bl.y, th) },
+        move: mv,
+        thousandth: th,
+        ...makeDefaultRadialFields(
+          (q.tl.x + q.tr.x + q.br.x + q.bl.x) * 0.25,
+          (q.tl.y + q.tr.y + q.br.y + q.bl.y) * 0.25
+        )
+      });
+    }
+
+    if (closedFillGroups.length > 0) {
+      const nested = nestClosedContoursWithHoles(closedFillGroups);
+      for (const item of nested) {
+        const bridged = bridgeHolesIntoOuter(item.pts, item.holes);
+        const quads = triangulatePolygonToQuads(bridged);
+        for (const q of quads) pushWorldQuad({ tl: q[0], tr: q[1], br: q[2], bl: q[3] });
+      }
+    }
+
+    for (const poly of openPolylines) {
+      if (strokeOutput === 'quadRibbon' || strokeOutput === 'variableInk') {
+        const halfW = (state.options.brushWidth || 0.004) * 0.5;
+        for (const q of buildMiterRibbonQuads(poly.pts, halfW, { closed: poly.closed })) {
+          pushWorldQuad(q);
+        }
+      } else {
+        for (let k = 0; k < poly.pts.length - 1; k++) pushWorldLine(poly.pts[k], poly.pts[k + 1]);
+      }
+    }
+
+    state.lastTraceIds = batchIds;
+    $('btnUndoTrace').disabled = batchIds.size === 0;
+    pushHistory();
+    requestRender();
+    showToast(`Imported SVG "${fileName}": ${batchIds.size} shapes into ${targetLayer === 'base' ? 'Base' : 'Drawn'} layer`);
+  }
+
+  /**
+   * Generate a clean procedural lineart test drawing showcasing acute X-crossings, curves,
+   * T-junctions, variable weights, and dark filled eyes with white highlights.
    */
   function loadSampleLineart() {
     const c = document.createElement('canvas');
@@ -5270,39 +7089,69 @@
     g.fillRect(0, 0, 512, 512);
 
     g.strokeStyle = '#111111';
-    g.lineWidth = 4;
+    g.fillStyle = '#111111';
     g.lineCap = 'round';
     g.lineJoin = 'round';
 
-    // Tactical winged emblem + anime-style character silhouette lineart
+    // Outer double emblem rings
+    g.lineWidth = 4;
     g.beginPath();
-    g.arc(256, 256, 170, 0, Math.PI * 2);
+    g.arc(256, 256, 178, 0, Math.PI * 2);
     g.stroke();
 
     // Inner diamond star
+    g.lineWidth = 3.5;
     g.beginPath();
-    g.moveTo(256, 65);
-    g.quadraticCurveTo(285, 225, 445, 256);
-    g.quadraticCurveTo(285, 285, 256, 445);
-    g.quadraticCurveTo(225, 285, 65, 256);
-    g.quadraticCurveTo(225, 225, 256, 65);
+    g.moveTo(256, 56);
+    g.quadraticCurveTo(286, 224, 456, 256);
+    g.quadraticCurveTo(286, 286, 256, 456);
+    g.quadraticCurveTo(224, 286, 56, 256);
+    g.quadraticCurveTo(224, 224, 256, 56);
     g.stroke();
 
-    // Wing feathers left & right
+    // Acute ~35-deg X-crossing diagonal hair/blade curves & T-junction feathers (tests crossing fidelity!)
+    g.lineWidth = 4.2;
+    g.beginPath();
+    g.moveTo(118, 128);
+    g.quadraticCurveTo(245, 168, 392, 232);
+    g.stroke();
+
+    g.lineWidth = 3.8;
+    g.beginPath();
+    g.moveTo(148, 228);
+    g.quadraticCurveTo(255, 165, 378, 118);
+    g.stroke();
+
+    // Flowing S-curve wing feathers meeting outer arcs at T-junctions
     for (let k = 0; k < 4; k++) {
-      const yOff = 155 + k * 42;
-      const span = 195 - k * 24;
+      const yOff = 285 + k * 28;
+      const span = 185 - k * 24;
+      g.lineWidth = Math.max(2.2, 4.4 - k * 0.5);
       g.beginPath();
-      g.moveTo(210, yOff);
-      g.quadraticCurveTo(256 - span * 0.6, yOff - 28, 256 - span, yOff + 10);
-      g.moveTo(302, yOff);
-      g.quadraticCurveTo(256 + span * 0.6, yOff - 28, 256 + span, yOff + 10);
+      g.moveTo(212, yOff);
+      g.bezierCurveTo(256 - span * 0.45, yOff - 22, 256 - span * 0.78, yOff + 18, 256 - span, yOff - 4);
+      g.moveTo(300, yOff);
+      g.bezierCurveTo(256 + span * 0.45, yOff - 22, 256 + span * 0.78, yOff + 18, 256 + span, yOff - 4);
       g.stroke();
     }
 
+    // Two solid dark stylized eyes with white interior glints (tests Smart Hybrid hole-preserving Solid Fill!)
+    for (const ex of [205, 307]) {
+      g.fillStyle = '#111111';
+      g.beginPath();
+      g.ellipse(ex, 222, 16, 20, 0, 0, Math.PI * 2);
+      g.fill();
+      g.fillStyle = '#ffffff';
+      g.beginPath();
+      g.ellipse(ex - 5, 214, 5, 6.5, -0.25, 0, Math.PI * 2);
+      g.fill();
+    }
+
     // Center aiming reticle cross & circle
+    g.strokeStyle = '#111111';
+    g.lineWidth = 3;
     g.beginPath();
-    g.arc(256, 256, 48, 0, Math.PI * 2);
+    g.arc(256, 256, 44, 0, Math.PI * 2);
     g.stroke();
 
     const img = new Image();
@@ -5310,13 +7159,16 @@
       state.refImage.img = img;
       state.refImage.name = 'Sample_Lineart.png';
       state.refImage.visible = true;
+      state.traceCrop = { active: false, editing: false, x0: 0, y0: 0, x1: 1, y1: 1 };
+      if ($('chkTraceCropMode')) $('chkTraceCropMode').checked = false;
+      if ($('btnTraceCropReset')) $('btnTraceCropReset').disabled = true;
       $('chkRefVis').checked = true;
       $('btnRefClear').disabled = false;
       $('btnAutoTrace').disabled = false;
       $('chkTraceLivePreview').checked = true;
       scheduleLiveTracePreview();
       requestRender();
-      showToast('Loaded Sample Lineart. Click "Auto-Draw Image → Reticle" or adjust Sensitivity!');
+      showToast('Loaded Sample Lineart. Try Pure Centerline or Smart Hybrid!');
     };
     img.src = c.toDataURL('image/png');
   }
@@ -5558,6 +7410,9 @@
         state.refImage.img = img;
         state.refImage.name = file.name;
         state.refImage.visible = true;
+        state.traceCrop = { active: false, editing: false, x0: 0, y0: 0, x1: 1, y1: 1 };
+        if ($('chkTraceCropMode')) $('chkTraceCropMode').checked = false;
+        if ($('btnTraceCropReset')) $('btnTraceCropReset').disabled = true;
         $('chkRefVis').checked = true;
         $('btnRefClear').disabled = false;
         $('btnAutoTrace').disabled = false;
@@ -5659,10 +7514,10 @@
     const hints = {
       select: 'Click or drag marquee to select • Shift+Click multi-select • Drag handles to scale/rotate • Arrow keys nudge • Ctrl+C/V copy/paste',
       line: 'Click-drag or click two points to draw a line • Hold Shift to snap 15° angles',
-      polyline: 'Click consecutive vertices to draw connected lines • Double-click or press Enter to finish',
-      spline: 'Click control points to draw a smooth Catmull-Rom curve • Double-click or press Enter to finish',
-      freehand: 'Click & drag to draw freely • Choose Lines, Thick Quad Ribbon, or Filled Closed Shape',
-      polygon: 'Click 3+ vertices to create filled quads/polygons • Click orange start dot, double-click, or Enter to fill',
+      polyline: 'Click vertices • Backspace/Right-Click undoes last point • Double-click or Enter to finish',
+      spline: 'Click control points • Click orange start dot to close loop • Backspace/Right-Click undoes last point • Double-click or Enter to finish',
+      freehand: 'Click & drag to draw freely • Adjust Stabilizer & Taper Ends in Tool Options',
+      polygon: 'Click 3+ vertices to create filled quads/polygons • Backspace/Right-Click undoes last point • Click orange start dot, double-click, or Enter to fill',
       rect: 'Click & drag to draw a rectangle • Hold Shift for a perfect square',
       circle: 'Click center and drag radius • Supports Native WT Circle, Segmented Lines, or Filled Quads',
       shape: 'Click center and drag radius to stamp Aiming Chevron (^), Star, Regular N-Gon, or Tactical Cross • Hold Shift to rotate',
@@ -5985,6 +7840,14 @@
       if (file) loadReferenceImageFile(file);
       e.target.value = '';
     });
+    $('btnImportSvg').addEventListener('click', () => $('fileImportSvg').click());
+    $('fileImportSvg').addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (file) {
+        file.text().then((txt) => importSvgFile(txt, file.name));
+      }
+      e.target.value = '';
+    });
 
     // Drag & drop files on window
     let dragCounter = 0;
@@ -6135,9 +7998,17 @@
       state.options.simplifyTol = parseFloat(e.target.value);
       $('lblSimplify').textContent = state.options.simplifyTol.toFixed(4);
     });
+    $('rngBrushStabilizer').addEventListener('input', (e) => {
+      const pct = parseFloat(e.target.value) || 0;
+      state.options.brushStabilizer = pct / 100;
+      $('lblBrushStabilizer').textContent = `${Math.round(pct)}%`;
+    });
     $('rngBrushWidth').addEventListener('input', (e) => {
       state.options.brushWidth = parseFloat(e.target.value);
       $('lblBrushWidth').textContent = state.options.brushWidth.toFixed(4);
+    });
+    $('chkBrushTaper').addEventListener('change', (e) => {
+      state.options.brushTaper = e.target.checked;
     });
     $('selSplineMode').addEventListener('change', (e) => {
       state.options.splineMode = e.target.value;
@@ -6176,8 +8047,12 @@
     $('btnRefClear').addEventListener('click', () => {
       state.refImage.img = null;
       state.refImage.name = '';
+      state.traceCrop = { active: false, editing: false, x0: 0, y0: 0, x1: 1, y1: 1 };
       state.tracePreview.lines = [];
       state.tracePreview.quads = [];
+      state.tracePreview.maskCanvas = null;
+      $('chkTraceCropMode').checked = false;
+      $('btnTraceCropReset').disabled = true;
       $('tracePreviewStats').textContent = 'Ready';
       $('btnRefClear').disabled = true;
       $('btnAutoTrace').disabled = true;
@@ -6234,11 +8109,27 @@
     });
 
     // Auto-Trace Slider Listeners (with live preview updates)
+    function updateTraceModeVisibility() {
+      const m = $('selTraceMode').value;
+      $('traceSolidRadRow').hidden = m !== 'hybrid';
+      $('traceSolidStyleRow').hidden = m !== 'hybrid' && m !== 'marching';
+    }
+    updateTraceModeVisibility();
+
     $('selTraceMode').addEventListener('change', () => {
+      updateTraceModeVisibility();
       $('chkTraceLivePreview').checked = true;
       scheduleLiveTracePreview();
     });
     $('selTraceOutput').addEventListener('change', () => {
+      $('chkTraceLivePreview').checked = true;
+      scheduleLiveTracePreview();
+    });
+    $('selTraceSolidStyle').addEventListener('change', () => {
+      $('chkTraceLivePreview').checked = true;
+      scheduleLiveTracePreview();
+    });
+    $('selTracePreviewStyle').addEventListener('change', () => {
       $('chkTraceLivePreview').checked = true;
       scheduleLiveTracePreview();
     });
@@ -6267,6 +8158,16 @@
       $('chkTraceLivePreview').checked = true;
       scheduleLiveTracePreview();
     });
+    $('rngTraceSpur').addEventListener('input', (e) => {
+      $('lblTraceSpur').textContent = `${e.target.value}px`;
+      $('chkTraceLivePreview').checked = true;
+      scheduleLiveTracePreview();
+    });
+    $('rngTraceSolidRad').addEventListener('input', (e) => {
+      $('lblTraceSolidRad').textContent = `${parseFloat(e.target.value).toFixed(1)}px`;
+      $('chkTraceLivePreview').checked = true;
+      scheduleLiveTracePreview();
+    });
     $('chkTraceLivePreview').addEventListener('change', () => {
       if ($('chkTraceLivePreview').checked) scheduleLiveTracePreview();
       requestRender();
@@ -6274,6 +8175,26 @@
     $('chkTraceInvert').addEventListener('change', () => {
       $('chkTraceLivePreview').checked = true;
       scheduleLiveTracePreview();
+    });
+    $('chkTraceWeldGaps').addEventListener('change', () => {
+      $('chkTraceLivePreview').checked = true;
+      scheduleLiveTracePreview();
+    });
+    $('chkTraceCropMode').addEventListener('change', (e) => {
+      state.traceCrop.editing = e.target.checked;
+      if (state.traceCrop.editing && !state.refImage.img) {
+        showToast('Load a Reference Image or Sample Art first', 'warn');
+      } else if (state.traceCrop.editing) {
+        showToast('Drag inside the canvas image to crop trace region');
+      }
+      requestRender();
+    });
+    $('btnTraceCropReset').addEventListener('click', () => {
+      state.traceCrop.active = false;
+      state.traceCrop.x0 = 0; state.traceCrop.y0 = 0; state.traceCrop.x1 = 1; state.traceCrop.y1 = 1;
+      $('btnTraceCropReset').disabled = true;
+      scheduleLiveTracePreview();
+      requestRender();
     });
     $('btnAutoTrace').addEventListener('click', commitAutoTraceToDocument);
     $('btnUndoTrace').addEventListener('click', undoLastAutoTrace);
@@ -6530,6 +8451,8 @@
       requestRender();
       showToast('Restored un-simplified selection');
     });
+    $('btnSmoothSelected').addEventListener('click', smoothSelectedLines);
+    $('btnWeldSelected').addEventListener('click', weldSelectedLineGaps);
     $('btnLinesToQuads').addEventListener('click', convertSelectedLinesToQuads);
     $('btnQuadsToLines').addEventListener('click', convertSelectedQuadsToLines);
 
@@ -8216,6 +10139,12 @@
     }
 
     if (e.key === 'Delete' || e.key === 'Backspace') {
+      if (e.key === 'Backspace' && state.polyPoints.length > 0) {
+        e.preventDefault();
+        state.polyPoints.pop();
+        requestRender();
+        return;
+      }
       e.preventDefault();
       deleteSelected();
       return;

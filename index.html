@@ -402,10 +402,22 @@
                 <input type="range" id="rngSimplify" min="0.0001" max="0.01" step="0.0001" value="0.0012" />
                 <span class="val-pill mono" id="lblSimplify">0.0012</span>
               </div>
+              <div class="field-row" data-opt="freehand">
+                <label for="rngBrushStabilizer" title="Smooths hand jitter using lazy-mouse stroke stabilization">Stabilizer</label>
+                <input type="range" id="rngBrushStabilizer" min="0" max="90" step="5" value="35" />
+                <span class="val-pill mono" id="lblBrushStabilizer">35%</span>
+              </div>
               <div class="field-row" data-opt="freehand-width">
                 <label for="rngBrushWidth">Thickness</label>
                 <input type="range" id="rngBrushWidth" min="0.001" max="0.03" step="0.0005" value="0.004" />
                 <span class="val-pill mono" id="lblBrushWidth">0.0040</span>
+              </div>
+              <div class="field-row" data-opt="freehand-width">
+                <label for="chkBrushTaper" title="Taper thickness smoothly at stroke start and end (Ribbon mode)">Taper Ends</label>
+                <label class="toggle-chip" style="flex: 1;">
+                  <input type="checkbox" id="chkBrushTaper" />
+                  <span>Taper Ends</span>
+                </label>
               </div>
 
               <!-- Spline Options -->
@@ -833,6 +845,8 @@
             <div class="btn-row">
               <button id="btnRefReset" class="btn btn-xs btn-ghost">Reset Pos</button>
               <button id="btnRefFit" class="btn btn-xs btn-ghost">Fit Sight</button>
+              <button id="btnImportSvg" class="btn btn-xs btn-secondary" title="Import .svg vector paths directly without rasterizing">Import .svg</button>
+              <input type="file" id="fileImportSvg" accept=".svg,image/svg+xml" hidden />
             </div>
 
             <!-- Pro Auto-Tracer Box -->
@@ -845,10 +859,10 @@
               <div class="field-row">
                 <label for="selTraceMode">Mode</label>
                 <select id="selTraceMode">
-                  <option value="centerline">Smart Line Art (Single-Stroke Centerline)</option>
+                  <option value="centerline">Smart Line Art (Pure Centerline)</option>
+                  <option value="hybrid">Line Art + Solid Fills (Smart Hybrid)</option>
                   <option value="marching">Crisp Contours (Sub-Pixel Outlines)</option>
                   <option value="canny">Illustration / Photo Edges (Canny)</option>
-                  <option value="hybrid">Hybrid Art (Lines + Filled Quads)</option>
                 </select>
               </div>
 
@@ -866,7 +880,7 @@
 
               <div class="field-row">
                 <label for="rngTraceRes" title="Sampling resolution (higher captures finer details)">Resolution</label>
-                <input type="range" id="rngTraceRes" min="256" max="1024" step="32" value="640" />
+                <input type="range" id="rngTraceRes" min="256" max="1280" step="64" value="640" />
                 <span class="val-pill mono" id="lblTraceRes">640px</span>
               </div>
 
@@ -877,21 +891,67 @@
               </div>
 
               <div class="field-row">
-                <label for="rngTraceMinLen" title="Filter out tiny dust specks shorter than this many pixels">De-Speckle</label>
+                <label for="rngTraceMinLen" title="Filter out tiny isolated fragments shorter than this many pixels">De-Speckle</label>
                 <input type="range" id="rngTraceMinLen" min="1" max="16" step="1" value="3" />
                 <span class="val-pill mono" id="lblTraceMinLen">3px</span>
+              </div>
+
+              <div class="field-row">
+                <label for="rngTraceSpur" title="Trim short whisker twigs and junction spurs up to this many pixels">Spur Trim</label>
+                <input type="range" id="rngTraceSpur" min="0" max="12" step="1" value="3" />
+                <span class="val-pill mono" id="lblTraceSpur">3px</span>
+              </div>
+
+              <div class="field-row" id="traceSolidRadRow" hidden>
+                <label for="rngTraceSolidRad" title="Minimum half-thickness (px) to separate thick shaded areas as solid fills">Solid Size</label>
+                <input type="range" id="rngTraceSolidRad" min="2" max="16" step="0.5" value="3.5" />
+                <span class="val-pill mono" id="lblTraceSolidRad">3.5px</span>
+              </div>
+
+              <div class="field-row" id="traceSolidStyleRow" hidden>
+                <label for="selTraceSolidStyle" title="Render thick dark regions or closed shapes as solid filled quads or contours">Solid Areas</label>
+                <select id="selTraceSolidStyle">
+                  <option value="fill">Solid Fill (Merged Quads)</option>
+                  <option value="outline">Crisp Outlines Only</option>
+                </select>
               </div>
 
               <div class="field-row">
                 <label for="selTraceOutput">Stroke Type</label>
                 <select id="selTraceOutput">
                   <option value="lines">Standard Lines (drawLines)</option>
-                  <option value="quadRibbon">Thick Filled Ribbon (drawQuads)</option>
+                  <option value="quadRibbon">Uniform Ribbon (drawQuads)</option>
+                  <option value="variableInk">Variable-Width Ink (drawQuads)</option>
                 </select>
               </div>
 
+              <div class="field-row">
+                <label for="selTracePreviewStyle" title="How Live Preview overlays detected vectors and the detected ink mask">Preview</label>
+                <select id="selTracePreviewStyle">
+                  <option value="cyan">Cyan Vector Overlay</option>
+                  <option value="contrast">High-Contrast Vectors</option>
+                  <option value="mask">Ink Mask + Vectors</option>
+                </select>
+              </div>
+
+              <div class="field-row">
+                <label for="selTraceLayer" title="Target layer for traced shapes">Layer</label>
+                <select id="selTraceLayer">
+                  <option value="draw">→ Drawn Layer</option>
+                  <option value="base">→ Base Layer</option>
+                </select>
+              </div>
+
+              <div class="btn-row">
+                <label class="toggle-chip" style="flex: 1;" title="Drag box corners on the canvas to trace only a cropped region of the image">
+                  <input type="checkbox" id="chkTraceCropMode" />
+                  <span>Crop Trace Area</span>
+                </label>
+                <button id="btnTraceCropReset" class="btn btn-xs btn-ghost" title="Reset trace region to the full reference image" disabled>Reset Crop</button>
+              </div>
+
               <div class="toggle-grid">
-                <label class="toggle-chip" title="Show real-time cyan preview of detected vectors on canvas as you adjust sliders">
+                <label class="toggle-chip" title="Show real-time preview of detected vectors on canvas as you adjust sliders">
                   <input type="checkbox" id="chkTraceLivePreview" checked />
                   <span>Live Preview</span>
                 </label>
@@ -903,10 +963,10 @@
                   <input type="checkbox" id="chkTraceInvert" />
                   <span>Invert B/W</span>
                 </label>
-                <select id="selTraceLayer" title="Target layer for traced shapes">
-                  <option value="draw">→ Drawn Layer</option>
-                  <option value="base">→ Base Layer</option>
-                </select>
+                <label class="toggle-chip" title="Bridge small 1–3px breaks between nearby stroke endpoints">
+                  <input type="checkbox" id="chkTraceWeldGaps" />
+                  <span>Bridge Gaps</span>
+                </label>
               </div>
 
               <div class="btn-row">
@@ -1111,7 +1171,11 @@
                   <button id="btnSelectConnected" class="btn btn-xs btn-secondary" title="Expand selection to all connected line segments (or double-click a line)">Select Chain</button>
                 </div>
                 <div class="btn-row">
-                  <button id="btnLinesToQuads" class="btn btn-xs btn-secondary" title="Convert selected thin lines into thick filled quads">Lines → Quads</button>
+                  <button id="btnSmoothSelected" class="btn btn-xs btn-secondary" title="Apply corner-preserving curve smoothing to selected connected chains">Smooth Curves</button>
+                  <button id="btnWeldSelected" class="btn btn-xs btn-secondary" title="Snap nearby open endpoints together on selected lines">Weld Gaps</button>
+                </div>
+                <div class="btn-row">
+                  <button id="btnLinesToQuads" class="btn btn-xs btn-secondary" title="Convert selected thin lines into miter-joined filled quads">Lines → Quads</button>
                   <button id="btnQuadsToLines" class="btn btn-xs btn-secondary" title="Convert selected filled quads into wireframe outline lines">Quads → Lines</button>
                 </div>
               </div>
@@ -1262,9 +1326,9 @@
         <p style="margin: 0 0 12px; color: var(--text-muted);">
           Open any <code>tank_sight_presets/*.blk</code> file or use <strong>Tank Sight Preset (HUD)</strong> to customize <code>crosshair:t</code> (previewing any custom <code>.blk</code> backdrop underneath), <code>reticle</code> thickness/font overrides, 4-mode optic colors (Day/Illum/NVG/Thermal), and all 5 draggable 1920x1080 HUD widgets (<code>rangefinder</code>, <code>turret</code>, <code>fov</code>, <code>gunReady</code>, <code>bulletType</code>).
         </p>
-        <h4 style="margin: 0 0 6px; color: var(--accent);">4. Auto-Drawing Any Reference Image</h4>
+        <h4 style="margin: 0 0 6px; color: var(--accent);">4. Auto-Drawing Images &amp; Importing .svg Art</h4>
         <p style="margin: 0 0 12px; color: var(--text-muted);">
-          Click <strong>Ref Image</strong> (or drag &amp; drop a PNG/JPG/WebP onto the canvas). In <strong>Ref Image &amp; Pro Auto-Draw</strong>, choose <strong>Smart Line Art</strong> for clean single-stroke outlines &amp; exact eye/shape borders, or <strong>Hybrid Art</strong> for lines + filled quads. Adjust <strong>Sensitivity</strong> while watching the cyan live preview, then click <strong>Auto-Draw Image → Reticle</strong>.
+          Click <strong>Ref Image</strong> (or drag &amp; drop a PNG/JPG/WebP onto the canvas), or click <strong>Import .svg</strong> to convert crisp SVG vector paths directly without rasterizing. In <strong>Ref Image &amp; Pro Auto-Draw</strong>, choose <strong>Smart Line Art (Pure Centerline)</strong> for junction-clean single strokes across crossings, or <strong>Line Art + Solid Fills (Smart Hybrid)</strong> to fill thick eyes/shadows as true hole-preserving <code>drawQuads</code> alongside crisp strokes. Use <strong>Variable-Width Ink</strong> for tapered calligraphic ribbons, toggle <strong>Crop Trace Area</strong> to isolate part of an image, and switch <strong>Preview</strong> to <strong>Ink Mask + Vectors</strong> to fine-tune <strong>Sensitivity</strong> and <strong>Spur Trim</strong> before clicking <strong>Auto-Draw Image → Reticle</strong>.
         </p>
         <h4 style="margin: 0 0 6px; color: var(--accent);">5. Optimizing Sight Complexity</h4>
         <p style="margin: 0 0 12px; color: var(--text-muted);">

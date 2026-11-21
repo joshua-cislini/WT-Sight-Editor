@@ -1280,6 +1280,11 @@ input[type="color"]:hover {
   border-top: 2px solid var(--accent-mid);
 }
 
+#traceSolidRadRow[hidden],
+#traceSolidStyleRow[hidden] {
+  display: none;
+}
+
 /* Layer Cards */
 .layer-card {
   background: rgba(255, 255, 255, 0.025);
