@@ -1,23 +1,34 @@
 <!DOCTYPE html>
 <html lang="en" data-type="software">
+
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="page-type" content="software" />
   <meta name="site-kind" content="software" />
   <meta name="theme-color" content="#000000" />
-  <meta name="description" content="WT Reticle Studio Pro is a visual War Thunder .blk custom sight, circular rangefinder, HUD preset, and vector art studio." />
+  <meta name="description"
+    content="WT Reticle Studio Pro is a visual War Thunder .blk custom sight, circular rangefinder, HUD preset, and vector art studio." />
   <meta property="og:title" content="WT Reticle Studio Pro" />
-  <meta property="og:description" content="Design, trace, and export War Thunder custom reticles and 1920x1080 HUD presets." />
+  <meta property="og:description"
+    content="Design, trace, and export War Thunder custom reticles and 1920x1080 HUD presets." />
   <meta property="og:type" content="website" />
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
   <title>WT Reticle Studio Pro: War Thunder .blk Custom Sight &amp; Art Editor</title>
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2334d399' stroke-width='2'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cline x1='12' y1='2' x2='12' y2='7'/%3E%3Cline x1='12' y1='17' x2='12' y2='22'/%3E%3Cline x1='2' y1='12' x2='7' y2='12'/%3E%3Cline x1='17' y1='12' x2='22' y2='12'/%3E%3Ccircle cx='12' cy='12' r='1.5' fill='%2334d399'/%3E%3C/svg%3E" />
+  <link rel="icon" type="image/svg+xml"
+    href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2334d399' stroke-width='2'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cline x1='12' y1='2' x2='12' y2='7'/%3E%3Cline x1='12' y1='17' x2='12' y2='22'/%3E%3Cline x1='2' y1='12' x2='7' y2='12'/%3E%3Cline x1='17' y1='12' x2='22' y2='12'/%3E%3Ccircle cx='12' cy='12' r='1.5' fill='%2334d399'/%3E%3C/svg%3E" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600&family=Geist:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600&family=Geist:wght@400;500;600&display=swap"
+    rel="stylesheet" />
+  <script async src="https://rum.cronitor.io/script.js"></script>
+  <script>
+    window.cronitor = window.cronitor || function () { (window.cronitor.q = window.cronitor.q || []).push(arguments); };
+    cronitor('config', { clientKey: '44eb64d818ef51cd642eeca61e6da82f' });
+  </script>
   <script>
     (function () {
       var isWeb = window.location.protocol === 'http:' || window.location.protocol === 'https:';
@@ -41,8 +52,11 @@
       document.head.appendChild(link);
     })();
   </script>
-  <noscript><link rel="stylesheet" href="styles.css" /></noscript>
+  <noscript>
+    <link rel="stylesheet" href="styles.css" />
+  </noscript>
 </head>
+
 <body>
   <a href="#canvasStage" class="skip-link">Skip to canvas stage</a>
   <div class="app-shell" data-enter>
@@ -50,7 +64,8 @@
     <header class="topbar" role="banner">
       <div class="topbar-group brand-group">
         <div class="brand-logo" title="WT Reticle Studio Pro">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="9" />
             <line x1="12" y1="2" x2="12" y2="7" />
             <line x1="12" y1="17" x2="12" y2="22" />
@@ -68,14 +83,18 @@
       <nav class="topbar-group file-group" aria-label="File and Sight Controls">
         <label class="inline-label" for="presetSelect">sights/</label>
         <select id="presetSelect" class="select-ctrl" title="Auto-discovered sights from sights/ folder"></select>
-        <button id="btnRefreshSights" class="btn btn-icon" title="Rescan sights/ folder for added .blk files" aria-label="Rescan sights folder">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <button id="btnRefreshSights" class="btn btn-icon" title="Rescan sights/ folder for added .blk files"
+          aria-label="Rescan sights folder">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M21 12a9 9 0 1 1-2.64-6.36" />
             <polyline points="21 3 21 9 15 9" />
           </svg>
         </button>
-        <button id="btnLinkSightsFolder" class="btn btn-ghost btn-sm" title="Link your sights/ folder for direct browser live scanning and saving">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <button id="btnLinkSightsFolder" class="btn btn-ghost btn-sm"
+          title="Link your sights/ folder for direct browser live scanning and saving">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
           </svg>
           <span class="btn-label-collapsible">Link sights/</span>
@@ -84,8 +103,10 @@
         <button id="btnNewBlank" class="btn btn-ghost btn-sm" title="Create a blank custom sight">Blank</button>
         <div class="v-sep"></div>
         <button id="btnOpenBlk" class="btn btn-secondary btn-sm" title="Open any .blk file from disk">Open .blk</button>
-        <button id="btnImportOverlay" class="btn btn-secondary btn-sm" title="Import another .blk sight into Base Layer to draw art over it">Overlay .blk</button>
-        <button id="btnUploadRefImg" class="btn btn-secondary btn-sm" title="Upload PNG/JPG/SVG/WebP reference image to trace or auto-draw">Ref Image</button>
+        <button id="btnImportOverlay" class="btn btn-secondary btn-sm"
+          title="Import another .blk sight into Base Layer to draw art over it">Overlay .blk</button>
+        <button id="btnUploadRefImg" class="btn btn-secondary btn-sm"
+          title="Upload PNG/JPG/SVG/WebP reference image to trace or auto-draw">Ref Image</button>
         <input type="file" id="fileOpenBlk" accept=".blk,.txt" hidden />
         <input type="file" id="fileImportOverlay" accept=".blk,.txt" hidden />
         <input type="file" id="fileRefImg" accept="image/*" hidden />
@@ -93,33 +114,45 @@
 
       <div class="topbar-group action-group">
         <button id="btnUndo" class="btn btn-icon" title="Undo (Ctrl+Z)" aria-label="Undo" disabled>
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
             <path d="M9 14L4 9l5-5" />
             <path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" />
           </svg>
         </button>
         <button id="btnRedo" class="btn btn-icon" title="Redo (Ctrl+Y / Ctrl+Shift+Z)" aria-label="Redo" disabled>
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
             <path d="M15 14l5-5-5-5" />
             <path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13" />
           </svg>
         </button>
         <div class="v-sep"></div>
         <div class="mode-switcher" role="group" aria-label="Sight Preview Mode">
-          <button class="mode-btn active" data-mode="day" title="Daytime Optic Field Preview"><span class="mode-swatch" id="swatchModeDay"></span>Day</button>
-          <button class="mode-btn" data-mode="light" title="Illuminated Reticle Preview"><span class="mode-swatch" id="swatchModeLight"></span>Illum</button>
-          <button class="mode-btn" data-mode="thermal" title="White-Hot Thermal Preview"><span class="mode-swatch" id="swatchModeThermal"></span>Thermal</button>
-          <button class="mode-btn" data-mode="nvg" title="Green Phosphor NVG Preview"><span class="mode-swatch" id="swatchModeNvg"></span>NVG</button>
+          <button class="mode-btn active" data-mode="day" title="Daytime Optic Field Preview"><span class="mode-swatch"
+              id="swatchModeDay"></span>Day</button>
+          <button class="mode-btn" data-mode="light" title="Illuminated Reticle Preview"><span class="mode-swatch"
+              id="swatchModeLight"></span>Illum</button>
+          <button class="mode-btn" data-mode="thermal" title="White-Hot Thermal Preview"><span class="mode-swatch"
+              id="swatchModeThermal"></span>Thermal</button>
+          <button class="mode-btn" data-mode="nvg" title="Green Phosphor NVG Preview"><span class="mode-swatch"
+              id="swatchModeNvg"></span>NVG</button>
           <button class="mode-btn" data-mode="blueprint" title="High-Contrast Dark CAD Blueprint View">CAD</button>
-          <button class="mode-btn" data-mode="motion" title="Color-code elements by motion: Static vs Vertical (move:b) vs Radial (moveRadial)">Motion</button>
+          <button class="mode-btn" data-mode="motion"
+            title="Color-code elements by motion: Static vs Vertical (move:b) vs Radial (moveRadial)">Motion</button>
         </div>
         <div class="v-sep"></div>
-        <button id="btnRangePreview" class="btn btn-secondary btn-sm" title="Simulate War Thunder Rangefinder &amp; Circular Distance Control (0 to 4000m)">Range Preview</button>
+        <button id="btnRangePreview" class="btn btn-secondary btn-sm"
+          title="Simulate War Thunder Rangefinder &amp; Circular Distance Control (0 to 4000m)">Range Preview</button>
         <div class="v-sep"></div>
-        <button id="btnExportPng" class="btn btn-ghost btn-sm" title="Export a high-resolution PNG screenshot of the reticle">PNG</button>
-        <button id="btnViewCode" class="btn btn-secondary btn-sm" title="Inspect or edit raw .blk source">Raw .blk</button>
-        <button id="btnOpenGuide" class="btn btn-ghost btn-sm" title="Quick Usage &amp; War Thunder Sight Installation Guide">Guide</button>
-        <button id="btnSaveBlk" class="btn btn-primary btn-sm" title="Save or Download .blk file (Ctrl+S)">Save .blk</button>
+        <button id="btnExportPng" class="btn btn-ghost btn-sm"
+          title="Export a high-resolution PNG screenshot of the reticle">PNG</button>
+        <button id="btnViewCode" class="btn btn-secondary btn-sm" title="Inspect or edit raw .blk source">Raw
+          .blk</button>
+        <button id="btnOpenGuide" class="btn btn-ghost btn-sm"
+          title="Quick Usage &amp; War Thunder Sight Installation Guide">Guide</button>
+        <button id="btnSaveBlk" class="btn btn-primary btn-sm" title="Save or Download .blk file (Ctrl+S)">Save
+          .blk</button>
       </div>
     </header>
 
@@ -134,7 +167,8 @@
           <span class="kbd">V</span>
         </button>
 
-        <button class="tool-btn" data-tool="line" title="Line Segment (L): Drag or Click-Click • Hold Shift for 15° snap">
+        <button class="tool-btn" data-tool="line"
+          title="Line Segment (L): Drag or Click-Click • Hold Shift for 15° snap">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
             <line x1="4" y1="20" x2="20" y2="4" />
             <circle cx="4" cy="20" r="1.5" fill="currentColor" />
@@ -143,7 +177,8 @@
           <span class="kbd">L</span>
         </button>
 
-        <button class="tool-btn" data-tool="polyline" title="Polyline Chain (P): Click vertices • Double-click or Enter to finish">
+        <button class="tool-btn" data-tool="polyline"
+          title="Polyline Chain (P): Click vertices • Double-click or Enter to finish">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
             <polyline points="4 18 9 7 15 15 20 5" />
             <circle cx="4" cy="18" r="1.5" fill="currentColor" />
@@ -154,7 +189,8 @@
           <span class="kbd">P</span>
         </button>
 
-        <button class="tool-btn" data-tool="spline" title="Smooth Curve / Spline (S): Click control points for smooth organic curves • Double-click or Enter to finish">
+        <button class="tool-btn" data-tool="spline"
+          title="Smooth Curve / Spline (S): Click control points for smooth organic curves • Double-click or Enter to finish">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M3 18C6 6 12 6 12 12S18 18 21 6" />
             <circle cx="3" cy="18" r="1.5" fill="currentColor" />
@@ -164,15 +200,18 @@
           <span class="kbd">S</span>
         </button>
 
-        <button class="tool-btn" data-tool="freehand" title="Freehand Brush / Pen (B): Lines, Thick Quad Ribbon, or Closed Fill">
+        <button class="tool-btn" data-tool="freehand"
+          title="Freehand Brush / Pen (B): Lines, Thick Quad Ribbon, or Closed Fill">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M4 19c2-6 5-12 8-12s3 8 5 8 3-4 3-7" />
           </svg>
           <span class="kbd">B</span>
         </button>
 
-        <button class="tool-btn" data-tool="polygon" title="Filled Quad / Polygon (Q): Click points • Double-click or click start dot to fill">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" fill-opacity="0.3" stroke="currentColor" stroke-width="2">
+        <button class="tool-btn" data-tool="polygon"
+          title="Filled Quad / Polygon (Q): Click points • Double-click or click start dot to fill">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" fill-opacity="0.3" stroke="currentColor"
+            stroke-width="2">
             <polygon points="5 7 16 4 20 15 9 20" />
           </svg>
           <span class="kbd">Q</span>
@@ -185,14 +224,16 @@
           <span class="kbd">R</span>
         </button>
 
-        <button class="tool-btn" data-tool="circle" title="Circle / Arc (C): Native WT circle, segmented lines, or filled">
+        <button class="tool-btn" data-tool="circle"
+          title="Circle / Arc (C): Native WT circle, segmented lines, or filled">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="12" r="8" />
           </svg>
           <span class="kbd">C</span>
         </button>
 
-        <button class="tool-btn" data-tool="shape" title="Tactical Shape Stamp (G): Aiming Chevron, Star, Hexagon/N-Gon, Tactical Cross">
+        <button class="tool-btn" data-tool="shape"
+          title="Tactical Shape Stamp (G): Aiming Chevron, Star, Hexagon/N-Gon, Tactical Cross">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
             <polygon points="12 3 14.8 8.8 21 9.7 16.5 14.1 17.6 20.3 12 17.3 6.4 20.3 7.5 14.1 3 9.7 9.2 8.8" />
           </svg>
@@ -215,7 +256,8 @@
 
         <button class="tool-btn" data-tool="pan" title="Pan Viewport (H or Space+Drag)">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M12 2v20M2 12h20M12 2l-3 3M12 2l3 3M12 22l-3-3M12 22l3-3M2 12l3-3M2 12l3 3M22 12l-3-3M22 12l-3 3" />
+            <path
+              d="M12 2v20M2 12h20M12 2l-3 3M12 2l3 3M12 22l-3-3M12 22l3-3M2 12l3-3M2 12l3 3M22 12l-3-3M22 12l-3 3" />
           </svg>
           <span class="kbd">H</span>
         </button>
@@ -238,7 +280,8 @@
             <path d="M3 12h18M7 8l5-5 5 5H7zM7 16l5 5 5-5H7z" />
           </svg>
         </button>
-        <button id="btnMirrorCloneX" class="tool-action-btn" title="Mirror-Copy Selected Across X=0 Center Axis" disabled>
+        <button id="btnMirrorCloneX" class="tool-action-btn" title="Mirror-Copy Selected Across X=0 Center Axis"
+          disabled>
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
             <line x1="12" y1="2" x2="12" y2="22" stroke-dasharray="2 2" />
             <polygon points="3 12 9 7 9 17" />
@@ -310,8 +353,10 @@
 
         <div class="range-preview-bar" id="rangePreviewBar" hidden>
           <div class="range-preview-row">
-            <button id="btnRangePlay" class="hud-btn range-play-btn" title="Auto-sweep rangefinder (Play / Pause)">▶</button>
-            <input type="range" id="rngPreviewDist" min="0" max="4000" step="10" value="0" title="Simulate distance zeroing (meters)" />
+            <button id="btnRangePlay" class="hud-btn range-play-btn"
+              title="Auto-sweep rangefinder (Play / Pause)">▶</button>
+            <input type="range" id="rngPreviewDist" min="0" max="4000" step="10" value="0"
+              title="Simulate distance zeroing (meters)" />
             <span class="val-pill mono" id="lblPreviewDist">0 m</span>
             <span class="badge mono" id="lblPreviewDrop">0.0 mil</span>
             <button id="btnRangeReset" class="hud-btn" title="Reset range to 0m">0m</button>
@@ -326,21 +371,24 @@
               <option value="apcr_1120">APCR (1120 m/s)</option>
               <option value="apfsds_1650">APFSDS (1650 m/s)</option>
             </select>
-            <input type="number" id="numPreviewSpeed" class="mini-num" min="100" max="2500" step="5" value="935" title="Gun shell muzzle velocity (m/s)" />
+            <input type="number" id="numPreviewSpeed" class="mini-num" min="100" max="2500" step="5" value="935"
+              title="Gun shell muzzle velocity (m/s)" />
             <span class="muted-note">m/s</span>
             <span class="muted-note">Zoom</span>
-            <input type="range" id="rngPreviewZoom" min="0.5" max="3.5" step="0.05" value="1" title="Optic zoom simulation (scales thousandth:b=yes elements)" />
+            <input type="range" id="rngPreviewZoom" min="0.5" max="3.5" step="0.05" value="1"
+              title="Optic zoom simulation (scales thousandth:b=yes elements)" />
             <span class="val-pill mono" id="lblPreviewZoom">1.00x</span>
             <label class="inline-check" title="Show circular dial pivot &amp; ring guides">
               <input type="checkbox" id="chkPreviewGuides" checked />
               <span>Guides</span>
             </label>
-            <button id="btnRangeSimHud" class="hud-btn" title="Simulate laser rangefinder progress bar and gun reload countdown">⚡ RF / Reload</button>
+            <button id="btnRangeSimHud" class="hud-btn"
+              title="Simulate laser rangefinder progress bar and gun reload countdown">⚡ RF / Reload</button>
           </div>
         </div>
 
         <div class="viewport-hud">
-          <span class="hud-item mono" id="hudCoords">X: 0.0000  Y: 0.0000</span>
+          <span class="hud-item mono" id="hudCoords">X: 0.0000 Y: 0.0000</span>
           <div class="v-sep"></div>
           <div class="hud-zoom">
             <button id="btnZoomOut" class="hud-btn" title="Zoom Out">-</button>
@@ -389,7 +437,8 @@
                   <span class="chip-dot draw-dot"></span>
                 </span>
               </label>
-              <label class="toggle-chip" title="Color-code shapes by motion type: Static (White), Vertical move:b (Cyan), Radial moveRadial (Amber)">
+              <label class="toggle-chip"
+                title="Color-code shapes by motion type: Static (White), Vertical move:b (Cyan), Radial moveRadial (Amber)">
                 <input type="checkbox" id="chkColorMotion" />
                 <span>Color Motion</span>
                 <span class="chip-color-dots" aria-hidden="true">
@@ -411,7 +460,8 @@
 
             <div class="field-row">
               <span class="muted-note" style="font-size:11px;min-width:34px">Draw:</span>
-              <label title="Drawn shapes move vertically with range correction (move:b=true; mutually exclusive with radial)">
+              <label
+                title="Drawn shapes move vertically with range correction (move:b=true; mutually exclusive with radial)">
                 <input type="checkbox" id="chkDefaultMove" />
                 <span>move:b</span>
               </label>
@@ -419,7 +469,8 @@
                 <input type="checkbox" id="chkDefaultThousandth" />
                 <span>mils</span>
               </label>
-              <label title="Drawn shapes rotate radially around (0,0) with range adjustment (moveRadial:b=yes; mutually exclusive with move:b)">
+              <label
+                title="Drawn shapes rotate radially around (0,0) with range adjustment (moveRadial:b=yes; mutually exclusive with move:b)">
                 <input type="checkbox" id="chkDefaultMoveRadial" />
                 <span>radial</span>
               </label>
@@ -443,7 +494,8 @@
                 <span class="val-pill mono" id="lblSimplify">0.0012</span>
               </div>
               <div class="field-row" data-opt="freehand">
-                <label for="rngBrushStabilizer" title="Smooths hand jitter using lazy mouse stroke stabilization">Stabilizer</label>
+                <label for="rngBrushStabilizer"
+                  title="Smooths hand jitter using lazy mouse stroke stabilization">Stabilizer</label>
                 <input type="range" id="rngBrushStabilizer" min="0" max="90" step="5" value="35" />
                 <span class="val-pill mono" id="lblBrushStabilizer">35%</span>
               </div>
@@ -453,7 +505,8 @@
                 <span class="val-pill mono" id="lblBrushWidth">0.0040</span>
               </div>
               <div class="field-row" data-opt="freehand-width">
-                <label for="chkBrushTaper" title="Taper thickness smoothly at stroke start and end (Ribbon mode)">Taper Ends</label>
+                <label for="chkBrushTaper" title="Taper thickness smoothly at stroke start and end (Ribbon mode)">Taper
+                  Ends</label>
                 <label class="toggle-chip" style="flex: 1;">
                   <input type="checkbox" id="chkBrushTaper" />
                   <span>Taper Ends</span>
@@ -470,7 +523,8 @@
               </div>
               <div class="field-row" data-opt="spline">
                 <label for="numSplineSegs">Smoothness</label>
-                <input type="number" id="numSplineSegs" min="4" max="32" step="2" value="12" title="Segments per curve span" />
+                <input type="number" id="numSplineSegs" min="4" max="32" step="2" value="12"
+                  title="Segments per curve span" />
               </div>
 
               <!-- Rect / Circle Mode -->
@@ -531,7 +585,9 @@
             <span class="badge mono" id="radialStatusBadge">OFF</span>
           </summary>
           <div class="panel-body">
-            <button id="btnOpenRangePreview" class="btn btn-sm btn-primary full-width" title="Open interactive range simulation bar to watch the circular dial rotate">▶ Preview Circular Rangefinder</button>
+            <button id="btnOpenRangePreview" class="btn btn-sm btn-primary full-width"
+              title="Open interactive range simulation bar to watch the circular dial rotate">▶ Preview Circular
+              Rangefinder</button>
 
             <div class="sub-box">
               <div class="sub-title">Quick Radial Sight Builder</div>
@@ -541,13 +597,15 @@
                   <option value="tzf9b">TZF 9b Tiger (Dual Arc)</option>
                   <option value="modern_radial">Modern Radial Tick Dial (All Tanks)</option>
                 </select>
-                <button id="btnBuildRadialPreset" class="btn btn-xs btn-secondary" title="Build complete circular rangefinder sight &amp; start preview">+ Build</button>
+                <button id="btnBuildRadialPreset" class="btn btn-xs btn-secondary"
+                  title="Build complete circular rangefinder sight &amp; start preview">+ Build</button>
               </div>
             </div>
 
             <div class="field-row">
               <label for="selRadialScaleTarget">Scale Target</label>
-              <select id="selRadialScaleTarget" title="Configure top-level crosshair_distances or a ballistics bullet block">
+              <select id="selRadialScaleTarget"
+                title="Configure top-level crosshair_distances or a ballistics bullet block">
                 <option value="main">Main Scale (crosshair_distances)</option>
               </select>
             </div>
@@ -569,7 +627,8 @@
                 <input type="checkbox" id="chkRadialDrawUpward" checked />
                 <span>Clockwise (upward)</span>
               </label>
-              <label class="toggle-chip" title="Keep central aiming mark fixed or apply elevation to gun (applyCorrectionToGun:b)">
+              <label class="toggle-chip"
+                title="Keep central aiming mark fixed or apply elevation to gun (applyCorrectionToGun:b)">
                 <input type="checkbox" id="chkRadialApplyGun" checked />
                 <span>Gun Corr.</span>
               </label>
@@ -609,8 +668,10 @@
             <div class="field-row">
               <label>Angle° / Stretch</label>
               <div class="dual-inputs">
-                <input type="number" id="numRadialAngle" value="180" step="5" title="Start angle radialAngle:r (180 = top)" />
-                <input type="number" id="numRadialStretch" value="5" step="0.25" min="0.1" title="Angular spacing multiplier radialStretch:r" />
+                <input type="number" id="numRadialAngle" value="180" step="5"
+                  title="Start angle radialAngle:r (180 = top)" />
+                <input type="number" id="numRadialStretch" value="5" step="0.25" min="0.1"
+                  title="Angular spacing multiplier radialStretch:r" />
               </div>
             </div>
 
@@ -624,7 +685,8 @@
 
             <div class="field-row">
               <label for="numRadialTextOff">Label Offset</label>
-              <input type="number" id="numRadialTextOff" value="0.015" step="0.002" title="Radial distance offset of range numbers (textPos.x)" />
+              <input type="number" id="numRadialTextOff" value="0.015" step="0.002"
+                title="Radial distance offset of range numbers (textPos.x)" />
             </div>
 
             <div class="sub-box">
@@ -632,14 +694,19 @@
               <div class="triple-inputs">
                 <input type="number" id="numRadialStep" value="100" step="50" min="50" title="Distance step (m)" />
                 <input type="number" id="numRadialMax" value="3000" step="100" min="200" title="Max distance (m)" />
-                <input type="number" id="numRadialLabelStep" value="200" step="100" min="100" title="Label interval (m)" />
+                <input type="number" id="numRadialLabelStep" value="200" step="100" min="100"
+                  title="Label interval (m)" />
               </div>
-              <button id="btnApplyRadialTicks" class="btn btn-xs btn-secondary full-width">Generate Distance Marks</button>
+              <button id="btnApplyRadialTicks" class="btn btn-xs btn-secondary full-width">Generate Distance
+                Marks</button>
             </div>
 
             <div class="btn-row">
-              <button id="btnAddRadialPointer" class="btn btn-xs btn-secondary" title="Add fixed 12 o'clock aiming triangle pointer">+ Index Pointer</button>
-              <button id="btnBakeRadialShapes" class="btn btn-xs btn-ghost" title="Convert active radial scale into editable moveRadial vector elements">Bake → Editable Shapes</button>
+              <button id="btnAddRadialPointer" class="btn btn-xs btn-secondary"
+                title="Add fixed 12 o'clock aiming triangle pointer">+ Index Pointer</button>
+              <button id="btnBakeRadialShapes" class="btn btn-xs btn-ghost"
+                title="Convert active radial scale into editable moveRadial vector elements">Bake → Editable
+                Shapes</button>
             </div>
           </div>
         </details>
@@ -653,7 +720,8 @@
           <div class="panel-body">
             <div class="field-row">
               <label for="selDocType">Export Mode</label>
-              <select id="selDocType" title="War Thunder stores Reticles (all_tanks / <tank-ID>) and HUD Presets (tank_sight_presets) in two separate files">
+              <select id="selDocType"
+                title="War Thunder stores Reticles (all_tanks / <tank-ID>) and HUD Presets (tank_sight_presets) in two separate files">
                 <option value="both">Both Files (&lt;name&gt;_reticle.blk + &lt;name&gt;_preset.blk)</option>
                 <option value="sight">Reticle Only (&lt;name&gt;_reticle.blk → all_tanks)</option>
                 <option value="hud_preset">HUD Preset Only (&lt;name&gt;_preset.blk → tank_sight_presets)</option>
@@ -661,9 +729,13 @@
             </div>
 
             <div class="btn-row">
-              <button id="btnSaveBothBlk" class="btn btn-xs btn-primary" style="flex: 1;" title="Export both <filename>_reticle.blk (for UserSights/all_tanks/) and <filename>_preset.blk (for UserSights/tank_sight_presets/)">Save Both (_reticle + _preset)</button>
-              <button id="btnSaveReticleOnly" class="btn btn-xs btn-secondary" title="Export only <filename>_reticle.blk for UserSights/all_tanks/ or <tank-ID>">_reticle.blk</button>
-              <button id="btnSavePresetOnly" class="btn btn-xs btn-secondary" title="Export only <filename>_preset.blk for UserSights/tank_sight_presets/">_preset.blk</button>
+              <button id="btnSaveBothBlk" class="btn btn-xs btn-primary" style="flex: 1;"
+                title="Export both <filename>_reticle.blk (for UserSights/all_tanks/) and <filename>_preset.blk (for UserSights/tank_sight_presets/)">Save
+                Both (_reticle + _preset)</button>
+              <button id="btnSaveReticleOnly" class="btn btn-xs btn-secondary"
+                title="Export only <filename>_reticle.blk for UserSights/all_tanks/ or <tank-ID>">_reticle.blk</button>
+              <button id="btnSavePresetOnly" class="btn btn-xs btn-secondary"
+                title="Export only <filename>_preset.blk for UserSights/tank_sight_presets/">_preset.blk</button>
             </div>
 
             <div class="sub-box">
@@ -673,12 +745,14 @@
                   <option value="pro">Pro Competitive HUD (All 5 Widgets)</option>
                   <option value="minimal">Minimal Custom HUD (Default)</option>
                 </select>
-                <button id="btnBuildHudPreset" class="btn btn-xs btn-secondary" title="Create or reset workspace with this HUD preset template">+ Apply</button>
+                <button id="btnBuildHudPreset" class="btn btn-xs btn-secondary"
+                  title="Create or reset workspace with this HUD preset template">+ Apply</button>
               </div>
             </div>
 
             <div class="hud-preset-warn" id="hudVectorExportHint" hidden>
-              <span>War Thunder keeps Reticles and HUD Presets in 2 separate folders. Export <strong>Both Files</strong> to save <code>_reticle.blk</code> + <code>_preset.blk</code>.</span>
+              <span>War Thunder keeps Reticles and HUD Presets in 2 separate folders. Export <strong>Both Files</strong>
+                to save <code>_reticle.blk</code> + <code>_preset.blk</code>.</span>
               <button id="btnConvertToClassicSight" class="btn btn-xs btn-secondary">Export Both</button>
             </div>
 
@@ -686,20 +760,25 @@
               <div class="sub-title">Linked Reticle (crosshair:t) &amp; Backdrop</div>
               <div class="field-row">
                 <label for="inpCrosshairPreset">crosshair:t</label>
-                <input type="text" id="inpCrosshairPreset" list="crosshairPresetList" value="Default_Sight" placeholder="Default_Sight" title="Sight filename referenced by this preset (without .blk)" />
+                <input type="text" id="inpCrosshairPreset" list="crosshairPresetList" value="Default_Sight"
+                  placeholder="Default_Sight" title="Sight filename referenced by this preset (without .blk)" />
                 <datalist id="crosshairPresetList">
                   <option value="Default_Sight"></option>
                   <option value="ariete"></option>
                 </datalist>
               </div>
               <div class="btn-row">
-                <button id="btnLoadHudBackdrop" class="btn btn-xs btn-secondary" title="Load a local .blk custom sight file to preview underneath HUD widgets">Load Backdrop .blk</button>
-                <button id="btnClearHudBackdrop" class="btn btn-xs btn-ghost" title="Clear custom backdrop override and auto-resolve from catalog">Reset</button>
+                <button id="btnLoadHudBackdrop" class="btn btn-xs btn-secondary"
+                  title="Load a local .blk custom sight file to preview underneath HUD widgets">Load Backdrop
+                  .blk</button>
+                <button id="btnClearHudBackdrop" class="btn btn-xs btn-ghost"
+                  title="Clear custom backdrop override and auto-resolve from catalog">Reset</button>
                 <input type="file" id="fileHudBackdrop" accept=".blk,.txt" hidden />
               </div>
               <div class="muted-note" id="hudBackdropStatus">Backdrop: Built-in Standard Sight</div>
               <div class="field-row">
-                <label for="numShotDistOffset" title="shotDistScaleOffset:i: Horizontal offset of the distance scale">Dist Offset</label>
+                <label for="numShotDistOffset"
+                  title="shotDistScaleOffset:i: Horizontal offset of the distance scale">Dist Offset</label>
                 <input type="number" id="numShotDistOffset" value="0" step="1" />
               </div>
             </div>
@@ -719,8 +798,10 @@
               <div class="field-row">
                 <label>lineW / fontS</label>
                 <div class="dual-inputs">
-                  <input type="number" id="numReticleLineWidth" value="0" min="0" max="10" step="0.1" title="reticle lineWidth:r" />
-                  <input type="number" id="numReticleFontSize" value="0.7" min="0.1" max="5" step="0.05" title="reticle fontSize:r" />
+                  <input type="number" id="numReticleLineWidth" value="0" min="0" max="10" step="0.1"
+                    title="reticle lineWidth:r" />
+                  <input type="number" id="numReticleFontSize" value="0.7" min="0.1" max="5" step="0.05"
+                    title="reticle fontSize:r" />
                 </div>
               </div>
             </div>
@@ -737,11 +818,16 @@
             </div>
 
             <div class="hud-widget-tabs" role="tablist" aria-label="HUD Widgets">
-              <button type="button" class="hud-widget-tab active" data-hud-widget="rangefinder" title="Rangefinder Readout &amp; Progress Bar"><span class="hud-widget-dot"></span>RF</button>
-              <button type="button" class="hud-widget-tab" data-hud-widget="turret" title="Hull / Turret Orientation Indicator"><span class="hud-widget-dot"></span>Turret</button>
-              <button type="button" class="hud-widget-tab" data-hud-widget="fov" title="Optical Zoom FOV Frame Brackets"><span class="hud-widget-dot"></span>FOV</button>
-              <button type="button" class="hud-widget-tab" data-hud-widget="gunReady" title="Breech Ready Mark &amp; Reload Countdown"><span class="hud-widget-dot"></span>Ready</button>
-              <button type="button" class="hud-widget-tab" data-hud-widget="bulletType" title="Selected Shell Type Readout"><span class="hud-widget-dot"></span>Ammo</button>
+              <button type="button" class="hud-widget-tab active" data-hud-widget="rangefinder"
+                title="Rangefinder Readout &amp; Progress Bar"><span class="hud-widget-dot"></span>RF</button>
+              <button type="button" class="hud-widget-tab" data-hud-widget="turret"
+                title="Hull / Turret Orientation Indicator"><span class="hud-widget-dot"></span>Turret</button>
+              <button type="button" class="hud-widget-tab" data-hud-widget="fov"
+                title="Optical Zoom FOV Frame Brackets"><span class="hud-widget-dot"></span>FOV</button>
+              <button type="button" class="hud-widget-tab" data-hud-widget="gunReady"
+                title="Breech Ready Mark &amp; Reload Countdown"><span class="hud-widget-dot"></span>Ready</button>
+              <button type="button" class="hud-widget-tab" data-hud-widget="bulletType"
+                title="Selected Shell Type Readout"><span class="hud-widget-dot"></span>Ammo</button>
             </div>
 
             <div class="sub-box" id="hudWidgetEditor">
@@ -763,15 +849,21 @@
                 <div class="field-row">
                   <label>HUD X / Y</label>
                   <div class="dual-inputs">
-                    <input type="number" id="numHudPosX" value="1024.5" min="0" max="1920" step="0.25" title="1920px virtual X coordinate" />
-                    <input type="number" id="numHudPosY" value="549.75" min="0" max="1080" step="0.25" title="1080px virtual Y coordinate" />
+                    <input type="number" id="numHudPosX" value="1024.5" min="0" max="1920" step="0.25"
+                      title="1920px virtual X coordinate" />
+                    <input type="number" id="numHudPosY" value="549.75" min="0" max="1080" step="0.25"
+                      title="1080px virtual Y coordinate" />
                   </div>
                 </div>
                 <div class="btn-row">
-                  <button type="button" id="btnHudCenterX" class="btn btn-xs btn-ghost" title="Center horizontally (X = 960)">X=960</button>
-                  <button type="button" id="btnHudCenterY" class="btn btn-xs btn-ghost" title="Center vertically (Y = 540)">Y=540</button>
-                  <button type="button" id="btnHudMirrorX" class="btn btn-xs btn-ghost" title="Mirror X across center (1920 - X)">Mirror X</button>
-                  <button type="button" id="btnHudSyncRfReadyY" class="btn btn-xs btn-ghost" title="Align Rangefinder &amp; GunReady Y coordinate">Align RF/Ready</button>
+                  <button type="button" id="btnHudCenterX" class="btn btn-xs btn-ghost"
+                    title="Center horizontally (X = 960)">X=960</button>
+                  <button type="button" id="btnHudCenterY" class="btn btn-xs btn-ghost"
+                    title="Center vertically (Y = 540)">Y=540</button>
+                  <button type="button" id="btnHudMirrorX" class="btn btn-xs btn-ghost"
+                    title="Mirror X across center (1920 - X)">Mirror X</button>
+                  <button type="button" id="btnHudSyncRfReadyY" class="btn btn-xs btn-ghost"
+                    title="Align Rangefinder &amp; GunReady Y coordinate">Align RF/Ready</button>
                 </div>
               </div>
 
@@ -797,7 +889,8 @@
               </div>
 
               <div id="hudBulletTypeOpts" hidden>
-                <label class="toggle-chip full-width" title="isShortName:b=yes displays abbreviated shell codes (APFSDS / APCBC)">
+                <label class="toggle-chip full-width"
+                  title="isShortName:b=yes displays abbreviated shell codes (APFSDS / APCBC)">
                   <input type="checkbox" id="chkHudBulletShortName" />
                   <span>Abbreviated Shell Name (isShortName:b)</span>
                 </label>
@@ -807,13 +900,15 @@
                 <div class="field-row">
                   <label for="colHudRfProg">Prog Fill</label>
                   <input type="color" id="colHudRfProg" value="#ffff00" />
-                  <input type="range" id="rngHudRfProgAlpha" min="0" max="255" value="255" title="Progress fill alpha (0-255)" />
+                  <input type="range" id="rngHudRfProgAlpha" min="0" max="255" value="255"
+                    title="Progress fill alpha (0-255)" />
                   <span class="val-pill mono" id="lblHudRfProgAlpha">100%</span>
                 </div>
                 <div class="field-row">
                   <label for="colHudRfProgBg">Prog BG</label>
                   <input type="color" id="colHudRfProgBg" value="#000000" />
-                  <input type="range" id="rngHudRfProgBgAlpha" min="0" max="255" value="0" title="Progress background alpha (0-255)" />
+                  <input type="range" id="rngHudRfProgBgAlpha" min="0" max="255" value="0"
+                    title="Progress background alpha (0-255)" />
                   <span class="val-pill mono" id="lblHudRfProgBgAlpha">0%</span>
                 </div>
               </div>
@@ -823,34 +918,42 @@
                 <div class="field-row">
                   <label for="colHudRetDay">Day Color</label>
                   <input type="color" id="colHudRetDay" value="#000000" />
-                  <input type="range" id="rngHudRetDayAlpha" min="0" max="255" value="255" title="Reticle Day Alpha (0-255)" />
+                  <input type="range" id="rngHudRetDayAlpha" min="0" max="255" value="255"
+                    title="Reticle Day Alpha (0-255)" />
                   <span class="val-pill mono" id="lblHudRetDayAlpha">100%</span>
                 </div>
                 <div class="field-row">
                   <label for="colHudRetLight">Illum Color</label>
                   <input type="color" id="colHudRetLight" value="#ff4040" />
-                  <input type="range" id="rngHudRetLightAlpha" min="0" max="255" value="255" title="Reticle Illuminated Alpha (0-255)" />
+                  <input type="range" id="rngHudRetLightAlpha" min="0" max="255" value="255"
+                    title="Reticle Illuminated Alpha (0-255)" />
                   <span class="val-pill mono" id="lblHudRetLightAlpha">100%</span>
                 </div>
                 <div class="field-row">
                   <label for="colHudRetNv">NVG Color</label>
                   <input type="color" id="colHudRetNv" value="#6eff91" />
-                  <input type="range" id="rngHudRetNvAlpha" min="0" max="255" value="255" title="Reticle Night Vision Alpha (0-255)" />
+                  <input type="range" id="rngHudRetNvAlpha" min="0" max="255" value="255"
+                    title="Reticle Night Vision Alpha (0-255)" />
                   <span class="val-pill mono" id="lblHudRetNvAlpha">100%</span>
                 </div>
                 <div class="field-row">
                   <label for="colHudRetThermal">Thermal Color</label>
                   <input type="color" id="colHudRetThermal" value="#f2f8ff" />
-                  <input type="range" id="rngHudRetThermalAlpha" min="0" max="255" value="255" title="Reticle Thermal Alpha (0-255)" />
+                  <input type="range" id="rngHudRetThermalAlpha" min="0" max="255" value="255"
+                    title="Reticle Thermal Alpha (0-255)" />
                   <span class="val-pill mono" id="lblHudRetThermalAlpha">100%</span>
                 </div>
               </div>
 
               <div class="hud-mode-tabs" role="tablist" aria-label="Widget Color Mode">
-                <button type="button" class="hud-mode-tab active" data-hud-color-mode="day"><span class="mode-swatch" id="swatchHudModeDay"></span>Day</button>
-                <button type="button" class="hud-mode-tab" data-hud-color-mode="light"><span class="mode-swatch" id="swatchHudModeLight"></span>Illum</button>
-                <button type="button" class="hud-mode-tab" data-hud-color-mode="nvg"><span class="mode-swatch" id="swatchHudModeNvg"></span>NVG</button>
-                <button type="button" class="hud-mode-tab" data-hud-color-mode="thermal"><span class="mode-swatch" id="swatchHudModeThermal"></span>Thermal</button>
+                <button type="button" class="hud-mode-tab active" data-hud-color-mode="day"><span class="mode-swatch"
+                    id="swatchHudModeDay"></span>Day</button>
+                <button type="button" class="hud-mode-tab" data-hud-color-mode="light"><span class="mode-swatch"
+                    id="swatchHudModeLight"></span>Illum</button>
+                <button type="button" class="hud-mode-tab" data-hud-color-mode="nvg"><span class="mode-swatch"
+                    id="swatchHudModeNvg"></span>NVG</button>
+                <button type="button" class="hud-mode-tab" data-hud-color-mode="thermal"><span class="mode-swatch"
+                    id="swatchHudModeThermal"></span>Thermal</button>
               </div>
 
               <div class="field-row">
@@ -868,9 +971,12 @@
               </div>
 
               <div class="btn-row">
-                <button type="button" id="btnHudCopyDayToModes" class="btn btn-xs btn-ghost" title="Copy this widget's Day color to Illum, NVG, and Thermal">Day → All Modes</button>
-                <button type="button" id="btnHudApplyColorsAllWidgets" class="btn btn-xs btn-ghost" title="Apply this widget's 4-mode palette to all other HUD widgets">Apply → All</button>
-                <button type="button" id="btnHudMatchReticleColors" class="btn btn-xs btn-ghost" title="Copy header Reticle Day/Illum/NVG/Thermal colors onto this widget">Match Reticle</button>
+                <button type="button" id="btnHudCopyDayToModes" class="btn btn-xs btn-ghost"
+                  title="Copy this widget's Day color to Illum, NVG, and Thermal">Day → All Modes</button>
+                <button type="button" id="btnHudApplyColorsAllWidgets" class="btn btn-xs btn-ghost"
+                  title="Apply this widget's 4-mode palette to all other HUD widgets">Apply → All</button>
+                <button type="button" id="btnHudMatchReticleColors" class="btn btn-xs btn-ghost"
+                  title="Copy header Reticle Day/Illum/NVG/Thermal colors onto this widget">Match Reticle</button>
               </div>
             </div>
           </div>
@@ -882,7 +988,8 @@
           <div class="panel-body">
             <div class="btn-row">
               <button id="btnRefUpload2" class="btn btn-sm btn-secondary">Load Image</button>
-              <button id="btnRefSample" class="btn btn-sm btn-ghost" title="Load a sample lineart drawing to test Auto-Draw">Sample Art</button>
+              <button id="btnRefSample" class="btn btn-sm btn-ghost"
+                title="Load a sample lineart drawing to test Auto-Draw">Sample Art</button>
               <button id="btnRefClear" class="btn btn-sm btn-ghost" disabled>Remove</button>
               <label class="inline-check">
                 <input type="checkbox" id="chkRefVis" checked />
@@ -890,7 +997,8 @@
               </label>
             </div>
 
-            <label class="toggle-chip full-width" title="Drag, resize, and position the reference image directly on the canvas">
+            <label class="toggle-chip full-width"
+              title="Drag, resize, and position the reference image directly on the canvas">
               <input type="checkbox" id="chkRefEditOnCanvas" />
               <span>Move / Resize Image Directly on Canvas</span>
             </label>
@@ -924,7 +1032,8 @@
             <div class="btn-row">
               <button id="btnRefReset" class="btn btn-xs btn-ghost">Reset Pos</button>
               <button id="btnRefFit" class="btn btn-xs btn-ghost">Fit Sight</button>
-              <button id="btnImportSvg" class="btn btn-xs btn-secondary" title="Import .svg vector paths directly without rasterizing">Import .svg</button>
+              <button id="btnImportSvg" class="btn btn-xs btn-secondary"
+                title="Import .svg vector paths directly without rasterizing">Import .svg</button>
               <input type="file" id="fileImportSvg" accept=".svg,image/svg+xml" hidden />
             </div>
 
@@ -946,13 +1055,15 @@
               </div>
 
               <div class="field-row">
-                <label for="rngTraceSens" title="Higher = detects fainter strokes, soft pencil lines, and fine details">Sensitivity</label>
+                <label for="rngTraceSens"
+                  title="Higher = detects fainter strokes, soft pencil lines, and fine details">Sensitivity</label>
                 <input type="range" id="rngTraceSens" min="5" max="99" step="1" value="72" />
                 <span class="val-pill mono" id="lblTraceSens">72%</span>
               </div>
 
               <div class="field-row">
-                <label for="rngTraceContrast" title="Amplifies faint lines and separates strokes from background">Contrast Boost</label>
+                <label for="rngTraceContrast"
+                  title="Amplifies faint lines and separates strokes from background">Contrast Boost</label>
                 <input type="range" id="rngTraceContrast" min="1" max="4" step="0.1" value="1.6" />
                 <span class="val-pill mono" id="lblTraceContrast">1.6x</span>
               </div>
@@ -964,31 +1075,37 @@
               </div>
 
               <div class="field-row">
-                <label for="rngTraceSimplify" title="Lower = keeps every subtle curve; Higher = smoother, fewer segments">Curve Smoothing</label>
+                <label for="rngTraceSimplify"
+                  title="Lower = keeps every subtle curve; Higher = smoother, fewer segments">Curve Smoothing</label>
                 <input type="range" id="rngTraceSimplify" min="0.2" max="3.5" step="0.05" value="0.65" />
                 <span class="val-pill mono" id="lblTraceSimplify">0.65px</span>
               </div>
 
               <div class="field-row">
-                <label for="rngTraceMinLen" title="Filter out tiny isolated fragments shorter than this many pixels">De-Speckle</label>
+                <label for="rngTraceMinLen"
+                  title="Filter out tiny isolated fragments shorter than this many pixels">De-Speckle</label>
                 <input type="range" id="rngTraceMinLen" min="1" max="16" step="1" value="3" />
                 <span class="val-pill mono" id="lblTraceMinLen">3px</span>
               </div>
 
               <div class="field-row">
-                <label for="rngTraceSpur" title="Trim short whisker twigs and junction spurs up to this many pixels">Spur Trim</label>
+                <label for="rngTraceSpur"
+                  title="Trim short whisker twigs and junction spurs up to this many pixels">Spur Trim</label>
                 <input type="range" id="rngTraceSpur" min="0" max="12" step="1" value="3" />
                 <span class="val-pill mono" id="lblTraceSpur">3px</span>
               </div>
 
               <div class="field-row" id="traceSolidRadRow" hidden>
-                <label for="rngTraceSolidRad" title="Minimum half-thickness (px) to separate thick shaded areas as solid fills">Solid Size</label>
+                <label for="rngTraceSolidRad"
+                  title="Minimum half-thickness (px) to separate thick shaded areas as solid fills">Solid Size</label>
                 <input type="range" id="rngTraceSolidRad" min="2" max="16" step="0.5" value="3.5" />
                 <span class="val-pill mono" id="lblTraceSolidRad">3.5px</span>
               </div>
 
               <div class="field-row" id="traceSolidStyleRow" hidden>
-                <label for="selTraceSolidStyle" title="Render thick dark regions or closed shapes as solid filled quads or contours">Solid Areas</label>
+                <label for="selTraceSolidStyle"
+                  title="Render thick dark regions or closed shapes as solid filled quads or contours">Solid
+                  Areas</label>
                 <select id="selTraceSolidStyle">
                   <option value="fill">Solid Fill (Merged Quads)</option>
                   <option value="outline">Crisp Outlines Only</option>
@@ -1005,7 +1122,8 @@
               </div>
 
               <div class="field-row">
-                <label for="selTracePreviewStyle" title="How Live Preview overlays detected vectors and the detected ink mask">Preview</label>
+                <label for="selTracePreviewStyle"
+                  title="How Live Preview overlays detected vectors and the detected ink mask">Preview</label>
                 <select id="selTracePreviewStyle">
                   <option value="cyan">Cyan Vector Overlay</option>
                   <option value="contrast">High-Contrast Vectors</option>
@@ -1022,15 +1140,18 @@
               </div>
 
               <div class="btn-row">
-                <label class="toggle-chip" style="flex: 1;" title="Drag box corners on the canvas to trace only a cropped region of the image">
+                <label class="toggle-chip" style="flex: 1;"
+                  title="Drag box corners on the canvas to trace only a cropped region of the image">
                   <input type="checkbox" id="chkTraceCropMode" />
                   <span>Crop Trace Area</span>
                 </label>
-                <button id="btnTraceCropReset" class="btn btn-xs btn-ghost" title="Reset trace region to the full reference image" disabled>Reset Crop</button>
+                <button id="btnTraceCropReset" class="btn btn-xs btn-ghost"
+                  title="Reset trace region to the full reference image" disabled>Reset Crop</button>
               </div>
 
               <div class="toggle-grid">
-                <label class="toggle-chip" title="Show real-time preview of detected vectors on canvas as you adjust sliders">
+                <label class="toggle-chip"
+                  title="Show real-time preview of detected vectors on canvas as you adjust sliders">
                   <input type="checkbox" id="chkTraceLivePreview" checked />
                   <span>Live Preview</span>
                 </label>
@@ -1038,7 +1159,8 @@
                   <input type="checkbox" id="chkTraceReplace" checked />
                   <span>Replace Last</span>
                 </label>
-                <label class="toggle-chip" title="Invert image brightness (use for white/light lines on a dark background)">
+                <label class="toggle-chip"
+                  title="Invert image brightness (use for white/light lines on a dark background)">
                   <input type="checkbox" id="chkTraceInvert" />
                   <span>Invert B/W</span>
                 </label>
@@ -1049,8 +1171,10 @@
               </div>
 
               <div class="btn-row">
-                <button id="btnAutoTrace" class="btn btn-sm btn-primary" style="flex: 1" disabled>Auto-Draw Image → Reticle</button>
-                <button id="btnUndoTrace" class="btn btn-sm btn-ghost" title="Remove last Auto-Draw trace" disabled>↩ Undo</button>
+                <button id="btnAutoTrace" class="btn btn-sm btn-primary" style="flex: 1" disabled>Auto-Draw Image →
+                  Reticle</button>
+                <button id="btnUndoTrace" class="btn btn-sm btn-ghost" title="Remove last Auto-Draw trace" disabled>↩
+                  Undo</button>
               </div>
             </div>
           </div>
@@ -1067,7 +1191,8 @@
                 <span class="layer-name">Base / Uploaded .blk</span>
                 <span class="layer-count mono" id="baseCount">0</span>
                 <button id="btnBaseVis" class="icon-mini active" title="Toggle Base Layer Visibility">👁</button>
-                <button id="btnBaseLock" class="icon-mini" title="Lock Base Layer so you can draw safely on top">🔓</button>
+                <button id="btnBaseLock" class="icon-mini"
+                  title="Lock Base Layer so you can draw safely on top">🔓</button>
               </div>
               <div class="layer-actions">
                 <div class="field-row">
@@ -1081,17 +1206,20 @@
                   </select>
                 </div>
                 <div class="field-row">
-                  <select id="selStaticTemplate" title="Generate static crosshair/HUD lines so dynamic presets can be drawn over">
+                  <select id="selStaticTemplate"
+                    title="Generate static crosshair/HUD lines so dynamic presets can be drawn over">
                     <option value="auto">Static: Auto From File</option>
                     <option value="standard">Static: Standard Crosshair</option>
                     <option value="ariete">Static: Ariete + HUD</option>
                   </select>
-                  <button id="btnBakeStatic" class="btn btn-xs btn-secondary" title="Add static crosshair &amp; HUD lines into Base Layer">+ Static Sight</button>
+                  <button id="btnBakeStatic" class="btn btn-xs btn-secondary"
+                    title="Add static crosshair &amp; HUD lines into Base Layer">+ Static Sight</button>
                 </div>
                 <div class="compact-transform">
                   <input type="number" id="numBaseShiftX" value="0" step="0.01" title="Shift X" placeholder="dX" />
                   <input type="number" id="numBaseShiftY" value="0" step="0.01" title="Shift Y" placeholder="dY" />
-                  <input type="number" id="numBaseScale" value="1" step="0.05" min="0.05" title="Scale factor" placeholder="Scale" />
+                  <input type="number" id="numBaseScale" value="1" step="0.05" min="0.05" title="Scale factor"
+                    placeholder="Scale" />
                   <button id="btnBaseTransform" class="btn btn-xs btn-secondary">Apply</button>
                 </div>
                 <div class="btn-row">
@@ -1131,7 +1259,9 @@
                 <div class="meter-fill" id="limitMeterFill" style="width: 0%"></div>
               </div>
               <div class="field-row">
-                <label for="rngOptDetail" title="100% keeps maximum detail; lower values remove more vertices and merge short segments">Detail Kept</label>
+                <label for="rngOptDetail"
+                  title="100% keeps maximum detail; lower values remove more vertices and merge short segments">Detail
+                  Kept</label>
                 <input type="range" id="rngOptDetail" min="5" max="99" step="1" value="75" />
                 <span class="val-pill mono" id="lblOptDetail">75%</span>
               </div>
@@ -1146,8 +1276,10 @@
                 </label>
               </div>
               <div class="btn-row">
-                <button id="btnOptimizeAll" class="btn btn-xs btn-primary" style="flex: 1" title="Optimize sight geometry at the selected Detail Kept level">Optimize Sight</button>
-                <button id="btnUndoOptimize" class="btn btn-xs btn-ghost" title="Restore original un-optimized geometry" disabled>↩ Undo Optimize</button>
+                <button id="btnOptimizeAll" class="btn btn-xs btn-primary" style="flex: 1"
+                  title="Optimize sight geometry at the selected Detail Kept level">Optimize Sight</button>
+                <button id="btnUndoOptimize" class="btn btn-xs btn-ghost" title="Restore original un-optimized geometry"
+                  disabled>↩ Undo Optimize</button>
               </div>
             </div>
           </div>
@@ -1160,26 +1292,34 @@
             <span class="badge mono" id="selCountBadge">0</span>
           </summary>
           <div class="panel-body">
-            <div id="selEmptyMsg" class="muted-note">Select shapes with V (click or drag marquee) to move, scale, mirror, radial-clone, or convert.</div>
+            <div id="selEmptyMsg" class="muted-note">Select shapes with V (click or drag marquee) to move, scale,
+              mirror, radial-clone, or convert.</div>
             <div id="selControls" hidden>
               <div class="btn-row">
                 <button id="btnSelToDraw" class="btn btn-xs btn-secondary">→ Drawn</button>
                 <button id="btnSelToBase" class="btn btn-xs btn-secondary">→ Base</button>
-                <button id="btnSelCenterOrigin" class="btn btn-xs btn-ghost" title="Center selection at sight origin (0,0)">Center (0,0)</button>
+                <button id="btnSelCenterOrigin" class="btn btn-xs btn-ghost"
+                  title="Center selection at sight origin (0,0)">Center (0,0)</button>
               </div>
               <div class="btn-row">
-                <button id="btnSelMirrorX" class="btn btn-xs btn-secondary" title="Clone selection mirrored across X=0">Mirror Copy X</button>
-                <button id="btnSelMirrorY" class="btn btn-xs btn-secondary" title="Clone selection mirrored across Y=0">Mirror Copy Y</button>
+                <button id="btnSelMirrorX" class="btn btn-xs btn-secondary"
+                  title="Clone selection mirrored across X=0">Mirror Copy X</button>
+                <button id="btnSelMirrorY" class="btn btn-xs btn-secondary"
+                  title="Clone selection mirrored across Y=0">Mirror Copy Y</button>
               </div>
               <div class="field-row">
-                <label title="Moves vertically with ballistic range injection (move:b=true)"><input type="checkbox" id="chkSelMove" /> <span>move:b</span></label>
-                <label title="Use angular thousandths/mils coordinates (thousandth:b=true)"><input type="checkbox" id="chkSelThousandth" /> <span>thousandth:b</span></label>
-                <label title="Boost illumination brightness (highlight:b=yes)"><input type="checkbox" id="chkSelHighlight" /> <span>highlight:b</span></label>
+                <label title="Moves vertically with ballistic range injection (move:b=true)"><input type="checkbox"
+                    id="chkSelMove" /> <span>move:b</span></label>
+                <label title="Use angular thousandths/mils coordinates (thousandth:b=true)"><input type="checkbox"
+                    id="chkSelThousandth" /> <span>thousandth:b</span></label>
+                <label title="Boost illumination brightness (highlight:b=yes)"><input type="checkbox"
+                    id="chkSelHighlight" /> <span>highlight:b</span></label>
               </div>
               <div class="sub-box">
                 <div class="sub-header-row">
                   <span class="sub-title">Circular Motion (moveRadial)</span>
-                  <label class="inline-check" title="Rotate element radially around radialCenter on zeroing (moveRadial:b=yes)">
+                  <label class="inline-check"
+                    title="Rotate element radially around radialCenter on zeroing (moveRadial:b=yes)">
                     <input type="checkbox" id="chkSelMoveRadial" />
                     <span>moveRadial:b</span>
                   </label>
@@ -1187,23 +1327,32 @@
                 <div class="field-row">
                   <label>Pivot X / Y</label>
                   <div class="dual-inputs">
-                    <input type="number" id="numSelRadCx" value="0" step="0.01" placeholder="X" title="radialCenter X" />
-                    <input type="number" id="numSelRadCy" value="0" step="0.01" placeholder="Y" title="radialCenter Y" />
+                    <input type="number" id="numSelRadCx" value="0" step="0.01" placeholder="X"
+                      title="radialCenter X" />
+                    <input type="number" id="numSelRadCy" value="0" step="0.01" placeholder="Y"
+                      title="radialCenter Y" />
                   </div>
                 </div>
                 <div class="field-row">
                   <label>Angle° / Speed</label>
                   <div class="dual-inputs">
-                    <input type="number" id="numSelRadAngle" value="" step="1" placeholder="deg" title="Initial radialAngle:r (degrees CCW)" />
-                    <input type="number" id="numSelRadSpeed" value="" step="0.05" placeholder="speed" title="radialMoveSpeed:r multiplier" />
+                    <input type="number" id="numSelRadAngle" value="" step="1" placeholder="deg"
+                      title="Initial radialAngle:r (degrees CCW)" />
+                    <input type="number" id="numSelRadSpeed" value="" step="0.05" placeholder="speed"
+                      title="radialMoveSpeed:r multiplier" />
                   </div>
                 </div>
                 <div class="field-row">
-                  <label for="numSelRadMult" title="Set each shape's radialMoveSpeed = multiplier × radius so multi-radius digits rotate rigidly">Rigid Mult</label>
+                  <label for="numSelRadMult"
+                    title="Set each shape's radialMoveSpeed = multiplier × radius so multi-radius digits rotate rigidly">Rigid
+                    Mult</label>
                   <input type="number" id="numSelRadMult" value="20.64" step="0.1" />
-                  <button id="btnSelRadSyncRigid" class="btn btn-xs btn-ghost" title="Compute radialMoveSpeed = Rigid Mult × distance from radialCenter for each selected item">Sync by Radius</button>
+                  <button id="btnSelRadSyncRigid" class="btn btn-xs btn-ghost"
+                    title="Compute radialMoveSpeed = Rigid Mult × distance from radialCenter for each selected item">Sync
+                    by Radius</button>
                 </div>
-                <button id="btnSelRadApply" class="btn btn-xs btn-secondary full-width">Apply Radial to Selection</button>
+                <button id="btnSelRadApply" class="btn btn-xs btn-secondary full-width">Apply Radial to
+                  Selection</button>
               </div>
               <div class="field-row">
                 <label>Shift dX/dY</label>
@@ -1245,17 +1394,25 @@
                   <span class="val-pill mono" id="lblSelOptDetail">75%</span>
                 </div>
                 <div class="btn-row">
-                  <button id="btnSimplifySelected" class="btn btn-xs btn-primary" title="Simplify selected lines using the Detail Kept slider">Simplify Selected</button>
-                  <button id="btnUndoSelOptimize" class="btn btn-xs btn-ghost" title="Undo selection simplification" disabled>↩ Undo</button>
-                  <button id="btnSelectConnected" class="btn btn-xs btn-secondary" title="Expand selection to all connected line segments (or double-click a line)">Select Chain</button>
+                  <button id="btnSimplifySelected" class="btn btn-xs btn-primary"
+                    title="Simplify selected lines using the Detail Kept slider">Simplify Selected</button>
+                  <button id="btnUndoSelOptimize" class="btn btn-xs btn-ghost" title="Undo selection simplification"
+                    disabled>↩ Undo</button>
+                  <button id="btnSelectConnected" class="btn btn-xs btn-secondary"
+                    title="Expand selection to all connected line segments (or double-click a line)">Select
+                    Chain</button>
                 </div>
                 <div class="btn-row">
-                  <button id="btnSmoothSelected" class="btn btn-xs btn-secondary" title="Apply corner-preserving curve smoothing to selected connected chains">Smooth Curves</button>
-                  <button id="btnWeldSelected" class="btn btn-xs btn-secondary" title="Snap nearby open endpoints together on selected lines">Weld Gaps</button>
+                  <button id="btnSmoothSelected" class="btn btn-xs btn-secondary"
+                    title="Apply corner-preserving curve smoothing to selected connected chains">Smooth Curves</button>
+                  <button id="btnWeldSelected" class="btn btn-xs btn-secondary"
+                    title="Snap nearby open endpoints together on selected lines">Weld Gaps</button>
                 </div>
                 <div class="btn-row">
-                  <button id="btnLinesToQuads" class="btn btn-xs btn-secondary" title="Convert selected thin lines into miter-joined filled quads">Lines → Quads</button>
-                  <button id="btnQuadsToLines" class="btn btn-xs btn-secondary" title="Convert selected filled quads into wireframe outline lines">Quads → Lines</button>
+                  <button id="btnLinesToQuads" class="btn btn-xs btn-secondary"
+                    title="Convert selected thin lines into miter-joined filled quads">Lines → Quads</button>
+                  <button id="btnQuadsToLines" class="btn btn-xs btn-secondary"
+                    title="Convert selected filled quads into wireframe outline lines">Quads → Lines</button>
                 </div>
               </div>
 
@@ -1289,7 +1446,8 @@
                 <input type="checkbox" id="chkDistCorr" checked />
                 <span>Range Readout</span>
               </label>
-              <label class="toggle-chip" title="applyCorrectionToGun:b: Elevate gun (yes) or shift aiming mark downward (no)">
+              <label class="toggle-chip"
+                title="applyCorrectionToGun:b: Elevate gun (yes) or shift aiming mark downward (no)">
                 <input type="checkbox" id="chkApplyCorrGun" checked />
                 <span>Gun Correction</span>
               </label>
@@ -1335,11 +1493,13 @@
               <span class="val-pill mono" id="lblThermalAlpha">100%</span>
             </div>
             <div class="field-row">
-              <label for="numGlobalDistOffset" title="shotDistScaleOffset:i: Distance scale horizontal offset">Dist Offset</label>
+              <label for="numGlobalDistOffset" title="shotDistScaleOffset:i: Distance scale horizontal offset">Dist
+                Offset</label>
               <input type="number" id="numGlobalDistOffset" value="0" step="1" />
             </div>
             <div class="sub-box">
-              <div class="sub-title" title="Required by War Thunder when placing sights in UserSights/all_tanks/">matchExpClass (all_tanks)</div>
+              <div class="sub-title" title="Required by War Thunder when placing sights in UserSights/all_tanks/">
+                matchExpClass (all_tanks)</div>
               <div class="toggle-grid">
                 <label class="toggle-chip" title="exp_tank:b=yes (Light &amp; Medium Tanks / MBTs)">
                   <input type="checkbox" id="chkExpTank" checked />
@@ -1364,9 +1524,11 @@
 
         <footer class="credits-footer">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">
-            <path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0 1 12 6.844a9.59 9.59 0 0 1 2.504.337c1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0 0 22 12.017C22 6.484 17.522 2 12 2z" />
+            <path
+              d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0 1 12 6.844a9.59 9.59 0 0 1 2.504.337c1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0 0 22 12.017C22 6.484 17.522 2 12 2z" />
           </svg>
-          <span>Created by <a href="https://github.com/joshua-cislini" target="_blank" rel="noopener noreferrer">joshua-cislini</a></span>
+          <span>Created by <a href="https://github.com/joshua-cislini" target="_blank"
+              rel="noopener noreferrer">joshua-cislini</a></span>
         </footer>
       </aside>
     </div>
@@ -1405,7 +1567,8 @@
     <div class="modal-dialog" style="max-width: 780px;">
       <div class="modal-header">
         <div class="modal-title">
-          <strong id="guideModalTitle" class="title-3">WT Reticle Studio Pro: Quick Guide &amp; War Thunder Setup</strong>
+          <strong id="guideModalTitle" class="title-3">WT Reticle Studio Pro: Quick Guide &amp; War Thunder
+            Setup</strong>
           <span class="mono muted-note">Read README.md for full documentation</span>
         </div>
         <button id="btnCloseGuide" class="btn btn-icon" title="Close" aria-label="Close guide">✕</button>
@@ -1413,52 +1576,93 @@
       <div class="modal-body" style="overflow-y: auto;">
         <h4>1. Example Sights &amp; Auto Discovery in <code>sights/</code></h4>
         <p>
-          The <code>sights/</code> folder includes ready to use example sights and acts as a live library. Drop any <code>.blk</code> file into <code>sights/</code> and run <code>Start-ReticleStudio.bat</code> (or click <strong>Link sights/</strong> in the top bar) to discover every sight in the dropdown.
+          The <code>sights/</code> folder includes ready to use example sights and acts as a live library. Drop any
+          <code>.blk</code> file into <code>sights/</code> and run <code>Start-ReticleStudio.bat</code> (or click
+          <strong>Link sights/</strong> in the top bar) to discover every sight in the dropdown.
         </p>
         <h4>2. Drawing Over Existing Sights</h4>
         <p>
-          Select any sight from <code>sights/</code> or click <strong>Overlay .blk</strong>. Classic preset files synthesize their static crosshair and range scale into the <strong>Base Layer</strong>. Lock the Base Layer and draw your custom artwork on the <strong>Drawn Art Overlay</strong> layer.
+          Select any sight from <code>sights/</code> or click <strong>Overlay .blk</strong>. Classic preset files
+          synthesize their static crosshair and range scale into the <strong>Base Layer</strong>. Lock the Base Layer
+          and draw your custom artwork on the <strong>Drawn Art Overlay</strong> layer.
         </p>
         <h4>3. Reticles vs. Tank Sight HUD Presets (Two File Architecture)</h4>
         <p>
-          War Thunder separates custom sights into <strong>two distinct <code>.blk</code> files in two separate folders</strong> (HUD settings placed inside <code>all_tanks</code> or <code>&lt;tank-ID&gt;</code> sight files are ignored by the game):<br/>
-          • <strong><code>&lt;filename&gt;_reticle.blk</code></strong>: Contains only the drawn reticle geometry (<code>drawLines</code>, <code>drawQuads</code>, <code>drawCircles</code>, <code>drawTexts</code>, <code>crosshair_distances</code>, <code>matchExpClass</code>) and goes into <code>UserSights\all_tanks\</code> or <code>UserSights\&lt;tank-ID&gt;\</code>.<br/>
-          • <strong><code>&lt;filename&gt;_preset.blk</code></strong>: Contains the 1920x1080 HUD widgets (<code>rangefinder</code>, <code>turret</code>, <code>fov</code>, <code>gunReady</code>, <code>bulletType</code>), 4 mode optic colors (Day, Illum, NVG, Thermal), <code>reticle</code> thickness and font overrides, and <code>crosshair:t="&lt;filename&gt;_reticle"</code> (linking it automatically to your reticle file), and goes into <code>UserSights\tank_sight_presets\</code>.<br/>
-          Clicking the primary <strong>Save .blk</strong> button in the top right corner (or pressing <code>Ctrl + S</code>) automatically exports both companion files whenever both reticle geometry and HUD preset settings are present. If only reticle shapes exist, it automatically exports only <code>_reticle.blk</code>; if only HUD widgets exist, it exports only <code>_preset.blk</code>. Dedicated export buttons also remain available in <strong>Tank Sight Preset (HUD)</strong>.
+          War Thunder separates custom sights into <strong>two distinct <code>.blk</code> files in two separate
+            folders</strong> (HUD settings placed inside <code>all_tanks</code> or <code>&lt;tank-ID&gt;</code> sight
+          files are ignored by the game):<br />
+          • <strong><code>&lt;filename&gt;_reticle.blk</code></strong>: Contains only the drawn reticle geometry
+          (<code>drawLines</code>, <code>drawQuads</code>, <code>drawCircles</code>, <code>drawTexts</code>,
+          <code>crosshair_distances</code>, <code>matchExpClass</code>) and goes into <code>UserSights\all_tanks\</code>
+          or <code>UserSights\&lt;tank-ID&gt;\</code>.<br />
+          • <strong><code>&lt;filename&gt;_preset.blk</code></strong>: Contains the 1920x1080 HUD widgets
+          (<code>rangefinder</code>, <code>turret</code>, <code>fov</code>, <code>gunReady</code>,
+          <code>bulletType</code>), 4 mode optic colors (Day, Illum, NVG, Thermal), <code>reticle</code> thickness and
+          font overrides, and <code>crosshair:t="&lt;filename&gt;_reticle"</code> (linking it automatically to your
+          reticle file), and goes into <code>UserSights\tank_sight_presets\</code>.<br />
+          Clicking the primary <strong>Save .blk</strong> button in the top right corner (or pressing
+          <code>Ctrl + S</code>) automatically exports both companion files whenever both reticle geometry and HUD
+          preset settings are present. If only reticle shapes exist, it automatically exports only
+          <code>_reticle.blk</code>; if only HUD widgets exist, it exports only <code>_preset.blk</code>. Dedicated
+          export buttons also remain available in <strong>Tank Sight Preset (HUD)</strong>.
         </p>
         <h4>4. Auto Drawing Images &amp; Importing .svg Art</h4>
         <p>
-          Click <strong>Ref Image</strong> (or drag and drop a PNG, JPG, or WebP onto the canvas), or click <strong>Import .svg</strong> to convert crisp SVG vector paths and <code>&lt;text&gt;</code> or <code>&lt;foreignObject&gt;</code> labels directly without rasterizing. In <strong>Ref Image &amp; Pro Auto-Draw</strong>, choose <strong>Smart Line Art (Pure Centerline)</strong> for junction clean single strokes across crossings, or <strong>Line Art + Solid Fills (Smart Hybrid)</strong> to fill thick eyes and shadows as true hole preserving <code>drawQuads</code> alongside crisp strokes. Use <strong>Variable-Width Ink</strong> for tapered calligraphic ribbons, toggle <strong>Crop Trace Area</strong> to isolate part of an image, and switch <strong>Preview</strong> to <strong>Ink Mask + Vectors</strong> to fine tune <strong>Sensitivity</strong> and <strong>Spur Trim</strong> before clicking <strong>Auto-Draw Image → Reticle</strong>.
+          Click <strong>Ref Image</strong> (or drag and drop a PNG, JPG, or WebP onto the canvas), or click
+          <strong>Import .svg</strong> to convert crisp SVG vector paths and <code>&lt;text&gt;</code> or
+          <code>&lt;foreignObject&gt;</code> labels directly without rasterizing. In <strong>Ref Image &amp; Pro
+            Auto-Draw</strong>, choose <strong>Smart Line Art (Pure Centerline)</strong> for junction clean single
+          strokes across crossings, or <strong>Line Art + Solid Fills (Smart Hybrid)</strong> to fill thick eyes and
+          shadows as true hole preserving <code>drawQuads</code> alongside crisp strokes. Use <strong>Variable-Width
+            Ink</strong> for tapered calligraphic ribbons, toggle <strong>Crop Trace Area</strong> to isolate part of an
+          image, and switch <strong>Preview</strong> to <strong>Ink Mask + Vectors</strong> to fine tune
+          <strong>Sensitivity</strong> and <strong>Spur Trim</strong> before clicking <strong>Auto-Draw Image →
+            Reticle</strong>.
         </p>
         <h4>5. Optimizing Sight Complexity</h4>
         <p>
-          Use the <strong>Detail Kept (5% to 99%)</strong> slider in <strong>Sight Optimizer &amp; Complexity</strong> to smoothly reduce line and quad counts while staying inside War Thunder engine limits. Click <strong>Undo Optimize</strong> anytime to restore full detail.
+          Use the <strong>Detail Kept (5% to 99%)</strong> slider in <strong>Sight Optimizer &amp; Complexity</strong>
+          to smoothly reduce line and quad counts while staying inside War Thunder engine limits. Click <strong>Undo
+            Optimize</strong> anytime to restore full detail.
         </p>
         <h4>6. Circular Rangefinders (TZF Style Radial Dials) &amp; Range Preview</h4>
         <p>
-          Open <strong>Circular Rangefinder (Radial)</strong> in the right sidebar to build native War Thunder radial scales (<code>ballistics { bullet { radial:b=yes } }</code> or top level <code>radial:b=yes</code>), or assign per element <code>moveRadial:b=yes</code> under <strong>Selection &amp; CAD</strong>. Click <strong>Range Preview</strong> in the top bar to scrub or animate 0 to 4000 m zeroing, optic zoom, and rangefinder or reload HUD simulation.
+          Open <strong>Circular Rangefinder (Radial)</strong> in the right sidebar to build native War Thunder radial
+          scales (<code>ballistics { bullet { radial:b=yes } }</code> or top level <code>radial:b=yes</code>), or assign
+          per element <code>moveRadial:b=yes</code> under <strong>Selection &amp; CAD</strong>. Click <strong>Range
+            Preview</strong> in the top bar to scrub or animate 0 to 4000 m zeroing, optic zoom, and rangefinder or
+          reload HUD simulation.
         </p>
         <h4>7. Installing Your Files in War Thunder &amp; Troubleshooting</h4>
         <p style="margin-bottom: 0;">
-          When saving both files (ensure filenames <strong>have no spaces</strong>):<br/>
-          1. Place <strong><code>&lt;filename&gt;_reticle.blk</code></strong> inside:<br/>
-          &nbsp;&nbsp;• All ground vehicles: <code>C:\Users\&lt;username&gt;\Documents\My Games\WarThunder\Saves\&lt;player-ID&gt;\production\UserSights\all_tanks\&lt;filename&gt;_reticle.blk</code><br/>
-          &nbsp;&nbsp;• Or specific vehicle: <code>C:\Users\&lt;username&gt;\Documents\My Games\WarThunder\Saves\&lt;player-ID&gt;\production\UserSights\&lt;tank-ID&gt;\&lt;filename&gt;_reticle.blk</code><br/>
-          2. Place <strong><code>&lt;filename&gt;_preset.blk</code></strong> inside:<br/>
-          &nbsp;&nbsp;• HUD Presets folder: <code>C:\Users\&lt;username&gt;\Documents\My Games\WarThunder\Saves\&lt;player-ID&gt;\production\UserSights\tank_sight_presets\&lt;filename&gt;_preset.blk</code><br/>
-          3. In War Thunder (<strong>Options → Common Battle Settings → Sight settings</strong>), select <strong><code>&lt;filename&gt;_preset</code></strong> under <strong>Choose preset</strong> (which automatically loads <code>&lt;filename&gt;_reticle</code> under <strong>Reticle</strong>).<br/>
-          <strong>Troubleshooting:</strong> <code>Alt + F9</code> to reload sights in game most probably will not work (a known War Thunder limitation). <strong>Restart the game</strong> after adding or editing a sight, and ensure filenames contain <strong>no spaces</strong>.
+          When saving both files (ensure filenames <strong>have no spaces</strong>):<br />
+          1. Place <strong><code>&lt;filename&gt;_reticle.blk</code></strong> inside:<br />
+          &nbsp;&nbsp;• All ground vehicles:
+          <code>C:\Users\&lt;username&gt;\Documents\My Games\WarThunder\Saves\&lt;player-ID&gt;\production\UserSights\all_tanks\&lt;filename&gt;_reticle.blk</code><br />
+          &nbsp;&nbsp;• Or specific vehicle:
+          <code>C:\Users\&lt;username&gt;\Documents\My Games\WarThunder\Saves\&lt;player-ID&gt;\production\UserSights\&lt;tank-ID&gt;\&lt;filename&gt;_reticle.blk</code><br />
+          2. Place <strong><code>&lt;filename&gt;_preset.blk</code></strong> inside:<br />
+          &nbsp;&nbsp;• HUD Presets folder:
+          <code>C:\Users\&lt;username&gt;\Documents\My Games\WarThunder\Saves\&lt;player-ID&gt;\production\UserSights\tank_sight_presets\&lt;filename&gt;_preset.blk</code><br />
+          3. In War Thunder (<strong>Options → Common Battle Settings → Sight settings</strong>), select
+          <strong><code>&lt;filename&gt;_preset</code></strong> under <strong>Choose preset</strong> (which
+          automatically loads <code>&lt;filename&gt;_reticle</code> under <strong>Reticle</strong>).<br />
+          <strong>Troubleshooting:</strong> <code>Alt + F9</code> to reload sights in game most probably will not work
+          (a known War Thunder limitation). <strong>Restart the game</strong> after adding or editing a sight, and
+          ensure filenames contain <strong>no spaces</strong>.
         </p>
       </div>
       <div class="modal-footer modal-footer-between">
-        <span class="credits-inline muted-note">Credits: <a href="https://github.com/joshua-cislini" target="_blank" rel="noopener noreferrer">github.com/joshua-cislini</a></span>
+        <span class="credits-inline muted-note">Credits: <a href="https://github.com/joshua-cislini" target="_blank"
+            rel="noopener noreferrer">github.com/joshua-cislini</a></span>
         <button id="btnGuideDone" class="btn btn-primary">Close Guide</button>
       </div>
     </div>
   </div>
 
   <!-- Import / Complexity Advisory & Confirmation Modal -->
-  <div class="modal-backdrop" id="importAdvisoryModal" role="dialog" aria-modal="true" aria-labelledby="importAdvisoryTitle" hidden>
+  <div class="modal-backdrop" id="importAdvisoryModal" role="dialog" aria-modal="true"
+    aria-labelledby="importAdvisoryTitle" hidden>
     <div class="modal-dialog" style="max-width: 560px; height: auto; max-height: 86vh;">
       <div class="modal-header">
         <div class="modal-title">
@@ -1527,4 +1731,5 @@
     })();
   </script>
 </body>
+
 </html>
